@@ -1,0 +1,29 @@
+# ---------------------------------------------
+# 🔐 Secrets and binary safety
+# ---------------------------------------------
+
+# Treat encrypted secrets as binary blobs
+secrets/*.enc binary diff=off merge=ours
+
+# Never show diffs or attempt merges for private keys/certs
+*.pem binary
+*.key binary
+id_* binary
+
+# ---------------------------------------------
+# 🧩 Text normalization
+# ---------------------------------------------
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# ---------------------------------------------
+# 🚫 Exclude internal files from git archive (ZIP)
+# ---------------------------------------------
+.gitignore export-ignore
+.gitattributes export-ignore
+.gitconfig export-ignore
+secrets/* export-ignore
+

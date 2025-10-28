@@ -1,0 +1,42 @@
+# ---------------------------------------------
+# 🧩 Bootstrap repository: Ignore local + secret files
+# ---------------------------------------------
+
+# 🧠 Decrypted environment files (never commit)
+.env
+.env.*
+secrets
+seed.sh
+TODO
+
+# ✅ Only encrypted files may be tracked
+!secrets/*.enc
+
+# 🔐 SSH agent sockets or temporary decrypted data
+/tmp/*
+*.tmp
+*.bak
+*.swp
+
+# ---------------------------------------------
+# 🧰 System / editor noise
+# ---------------------------------------------
+*.log
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains / PyCharm
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Shell history or local config
+.bash_history
+.gitconfig.local
+

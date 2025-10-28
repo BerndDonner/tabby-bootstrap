@@ -1,45 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === Functions ===
+# ===============================================
+# 🚀 start_tabby.sh
+# -----------------------------------------------
+# Starts a Tabby server in Docker using the models
+# prepared on the instance. The external server URL
+# is derived from the injected $REMOTE_IP variable
+# provided by deploy-seed.sh.
+#
+# Required environment variables:
+#   - TABBY_WEBSERVER_JWT_TOKEN_SECRET
+#   - REMOTE_IP   (exported by deploy-seed.sh)
+#
+# Optional environment variables:
+#   - PORT (default: 8080)
+#   - DATA_ROOT (default: /home/ubuntu/tabbyclassmodels)
+#   - MODEL_ROOT (default: ${DATA_ROOT}/models/TabbyML)
+#   - CONTAINER_NAME (default: tabby)
+#
+# Example:
+#   REMOTE_IP=192.168.1.42 ./setup/start_tabby.sh
+# ===============================================
 
-detect_public_ip() {
-  # Try several public IP services, silent unless all fail
-  local ip=""
-  local services=(
-    "https://ifconfig.me"
-    "https://api.ipify.org"
-    "https://ipinfo.io/ip"
-    "https://checkip.amazonaws.com"
-  )
-
-  for svc in "${services[@]}"; do
-    ip="$(curl -fs --max-time 5 "$svc" 2>/dev/null || true)"
-    if [[ -n "$ip" ]]; then
-      echo "$ip"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
-# ======== configurable bits ========
+# === Configurable parameters ===
 PORT="${PORT:-8080}"
-DATA_ROOT="${DATA_ROOT:-/home/ubuntu/tabbyclassmodels}"          # your persistent NFS mount
-MODEL_ROOT="${MODEL_ROOT:-${DATA_ROOT}/models/TabbyML}"          # where models live
+DATA_ROOT="${DATA_ROOT:-/home/ubuntu/tabbyclassmodels}"
+MODEL_ROOT="${MODEL_ROOT:-${DATA_ROOT}/models/TabbyML}"
+CONTAINER_NAME="${CONTAINER_NAME:-tabby}"
 
+# === Required secrets and variables ===
 if [[ -z "${TABBY_WEBSERVER_JWT_TOKEN_SECRET:-}" ]]; then
   echo "❌ Error: TABBY_WEBSERVER_JWT_TOKEN_SECRET must be set."
   exit 1
 fi
-JWT_SECRET="${TABBY_WEBSERVER_JWT_TOKEN_SECRET}"
+if [[ -z "${REMOTE_IP:-}" ]]; then
+  echo "❌ Error: REMOTE_IP must be provided (set by deploy-seed.sh)."
+  exit 1
+fi
 
-# detect IPs early (silent)
-PUBLIC_IP="$(detect_public_ip || true)"
-LOCAL_IP="$(ip route get 1 | awk '{print $7; exit}')"
-
-# models defined by your models.json (you already have these dirs)
+# === Model selections ===
 declare -A PROMPT_MODELS=(
   [deepseek]="DeepSeekCoder-6.7B"
   [gemma]="CodeGemma-7B"
@@ -50,47 +50,43 @@ declare -A CHAT_MODELS=(
   [mistral]="Mistral-7B"
 )
 
-# Default selections
-MODEL="${PROMPT_MODELS[deepseek]}"  # code completion model
-CHAT_MODEL="${CHAT_MODELS[qwen]}"   # chat/instruct model
+MODEL="${PROMPT_MODELS[deepseek]}"   # Code completion model
+CHAT_MODEL="${CHAT_MODELS[qwen]}"    # Chat/instruct model
 
-CONTAINER_NAME="${CONTAINER_NAME:-tabby}"
-
-# === Steps ===
-
-echo "==> [1/8] ensure docker group membership for $USER"
+# === Step 1: Ensure docker group ===
+echo "==> [1/7] Ensuring docker group membership for $USER"
 if ! getent group docker >/dev/null 2>&1; then
   sudo groupadd docker
 fi
-# add user to group; effective next login
 if id -nG "$USER" | grep -qw docker; then
   echo "    $USER already in 'docker' group."
 else
   sudo adduser "$USER" docker || sudo usermod -aG docker "$USER"
-  echo "    added $USER to 'docker' group (will take effect on next login)."
+  echo "    Added $USER to 'docker' group (will take effect next login)."
 fi
 
-echo "==> [2/8] ensure model root exists"
-mkdir -p "$DATA_ROOT"
+# === Step 2: Ensure model root exists ===
+echo "==> [2/7] Ensuring data directories exist"
+mkdir -p "$DATA_ROOT" "$MODEL_ROOT"
 ln -sfn "$DATA_ROOT" "$HOME/tabbyclassmodels"
 
-echo "==> [3/8] ensure model root exists: $MODEL_ROOT"
-mkdir -p "$MODEL_ROOT"
-
-echo "==> [4/8] pick docker image"
+# === Step 3: Select docker image ===
+echo "==> [3/7] Selecting Docker image"
 IMAGE="tabbyml/tabby:local"
 if ! sudo docker image inspect "$IMAGE" >/dev/null 2>&1; then
   IMAGE="tabbyml/tabby:latest"
-  echo "    local build not found; pulling $IMAGE ..."
+  echo "    Local build not found; pulling $IMAGE ..."
   sudo docker pull "$IMAGE" >/dev/null
 else
-  echo "    using locally built image: $IMAGE"
+  echo "    Using locally built image: $IMAGE"
 fi
 
-echo "==> [5/8] stop any previous container"
+# === Step 4: Stop any existing container ===
+echo "==> [4/7] Stopping any existing Tabby container"
 sudo docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-echo "==> [6/8] start Tabby"
+# === Step 5: Start container ===
+echo "==> [5/7] Starting Tabby container"
 sudo docker run -d \
   --name "$CONTAINER_NAME" \
   --user "$(id -u):$(id -g)" \
@@ -99,28 +95,26 @@ sudo docker run -d \
   -v "${DATA_ROOT}:/data" \
   -e TABBY_MODEL_DIR="/data/models/TabbyML" \
   -e TABBY_DISABLE_USAGE_COLLECTION="true" \
-  -e TABBY_WEBSERVER_JWT_TOKEN_SECRET="${JWT_SECRET}" \
-  -e TABBY_WEBSERVER_EXTERNAL_URL="http://${PUBLIC_IP:-$LOCAL_IP}:${PORT}" \
+  -e TABBY_WEBSERVER_JWT_TOKEN_SECRET="${TABBY_WEBSERVER_JWT_TOKEN_SECRET}" \
+  -e TABBY_WEBSERVER_EXTERNAL_URL="http://${REMOTE_IP}:${PORT}" \
   --restart unless-stopped \
   "$IMAGE" serve \
     --model "${MODEL}" \
     --chat-model "${CHAT_MODEL}"
 
-echo "==> [7/8] quick health check"
+# === Step 6: Quick health check ===
+echo "==> [6/7] Checking container logs"
 sleep 2
 sudo docker logs --tail 50 "$CONTAINER_NAME" || true
 
-echo "==> [8/8] done."
+# === Step 7: Summary ===
+echo "==> [7/7] Done."
 echo
-echo "    Tabby API (local):   http://${LOCAL_IP}:${PORT}"
-if [[ -n "${PUBLIC_IP}" && "${PUBLIC_IP}" != "${LOCAL_IP}" ]]; then
-  echo "    Tabby API (public):  http://${PUBLIC_IP}:${PORT}"
-fi
-echo "    Models dir:          ${MODEL_ROOT}"
-echo "    Image used:          ${IMAGE}"
+echo "    Tabby API reachable at: http://${REMOTE_IP}:${PORT}"
+echo "    Models dir:             ${MODEL_ROOT}"
+echo "    Docker image used:      ${IMAGE}"
 echo
 echo "NOTE:"
-echo " - Group change applied: 'docker'. For future sessions without sudo, re-login OR run:  newgrp docker"
-echo " - If models '${MODEL}' and '${CHAT_MODEL}' aren't present under ${MODEL_ROOT},"
-echo "   Tabby may start only the embedding server. Ensure those folders exist before starting."
-
+echo " - Group change 'docker' applied. Re-login or run 'newgrp docker' to apply immediately."
+echo " - Ensure model folders '${MODEL}' and '${CHAT_MODEL}' exist under ${MODEL_ROOT}."
+echo "   If not, Tabby may start only the embedding server."

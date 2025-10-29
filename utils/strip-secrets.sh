@@ -66,7 +66,7 @@
 #   - Only explicit markers are redacted; logic stays readable.
 #
 # ---------------------------------------------------------------------
-# AUTHOR:  Bernd Donner (with GPT-5 assistant)
+# AUTHOR:  Bernd Donner
 # LICENSE: MIT
 # =====================================================================
 

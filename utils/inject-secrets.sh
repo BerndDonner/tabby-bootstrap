@@ -92,7 +92,7 @@
 #   2  syntax or substitution error
 #
 # ---------------------------------------------------------------------
-# AUTHOR:  Bernd Donner (with GPT-5 assistant)
+# AUTHOR:  Bernd Donner
 # LICENSE: MIT
 # =====================================================================
 

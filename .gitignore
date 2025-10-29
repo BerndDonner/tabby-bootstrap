@@ -5,9 +5,8 @@
 # 🧠 Decrypted environment files (never commit)
 .env
 .env.*
-secrets
-seed.sh
-TODO
+*.key
+id_*
 
 # ✅ Only encrypted files may be tracked
 !secrets/*.enc

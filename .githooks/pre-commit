@@ -5,14 +5,10 @@
 set -euo pipefail
 
 TARGET="secrets/seed.sh"
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-echo "Running hook from: $(pwd)"
-echo "Repo root: $REPO_ROOT"
-
-if [[ -f "$REPO_ROOT/$TARGET" ]]; then
-  if git -C "$REPO_ROOT" check-attr filter "$TARGET" | grep -q stripsecrets; then
+if [[ -f "$TARGET" ]]; then
+  if git check-attr filter "$TARGET" | grep -q stripsecrets; then
     echo "==> Reapplying strip-secrets filter to $TARGET"
-    git -C "$REPO_ROOT" add --renormalize "$TARGET"
+    git add --renormalize "$TARGET"
   fi
 fi

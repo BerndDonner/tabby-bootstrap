@@ -3,41 +3,42 @@
 # 💉 inject-secrets.sh
 # ---------------------------------------------------------------------
 # PURPOSE:
-#   This script performs the inverse operation of strip-secrets.sh.
-#   It *injects* (re-inserts) real secrets into a redacted seed.sh
-#   template — typically after cloning or checking out the repository.
+#   Re-insert real secrets into a redacted seed.sh template.
+#   The inverse of strip-secrets.sh.
 #
-#   The script restores two kinds of secrets:
-#     1️⃣ Environment variables within a SECRET ENV block
+#   Restores:
+#     1️⃣ Environment variables inside a SECRET ENV block
 #     2️⃣ The embedded OpenSSH private key placeholder
 #
-#   It does NOT modify your git-tracked file unless you redirect the
-#   output to overwrite it.
+#   The script writes to stdout, so redirect output if you want to
+#   overwrite the original file.
 #
 # ---------------------------------------------------------------------
 # TYPICAL WORKFLOW:
 #
-#   1. Repo contains sanitized seed.sh (no real secrets)
+#   1. Repository contains sanitized seed.sh (no secrets)
 #   2. Local folder secrets/ contains:
-#        ├── seed.env              # key=value pairs
+#        ├── seed.key              # KEY=VALUE pairs (unquoted or quoted)
 #        └── id_tabby_bootstrap    # private SSH key
-#   3. Run:
-#        ./scripts/inject-secrets.sh secrets/seed.sh secrets/seed.env \
+#
+#   3. Run from project root:
+#        ./utils/inject-secrets.sh secrets/seed.sh secrets/seed.key \
 #            secrets/id_tabby_bootstrap > seed_filled.sh
+#
 #   4. The resulting seed_filled.sh is ready for local use or bootstrap.
 #
 # ---------------------------------------------------------------------
 # EXPECTED FILE FORMATS:
 #
-#   A) secrets/seed.env
-#      Simple key-value pairs:
+#   A) secrets/seed.key
+#      Simple KEY=VALUE pairs:
 #
-#         AWS_ACCESS_KEY_ID="AKIA..."
-#         AWS_SECRET_ACCESS_KEY="abcd..."
-#         TABBY_WEBSERVER_JWT_TOKEN_SECRET="1234..."
+#         AWS_ACCESS_KEY_ID=AKIA...
+#         AWS_SECRET_ACCESS_KEY=abcd...
+#         TABBY_WEBSERVER_JWT_TOKEN_SECRET=1234...
 #
 #      - Lines beginning with # are ignored.
-#      - Quotes around values are optional.
+#      - Quotes around values are optional and will be stripped.
 #
 #   B) secrets/id_tabby_bootstrap
 #      The raw OpenSSH private key file:
@@ -49,41 +50,32 @@
 # ---------------------------------------------------------------------
 # REDACTED TEMPLATE FORMAT:
 #
-#   The template (seed.sh) must include two placeholders:
+#     # -----BEGIN SECRET ENV-----
+#     AWS_ACCESS_KEY_ID="<REDACTED>"
+#     AWS_SECRET_ACCESS_KEY="<REDACTED>"
+#     TABBY_WEBSERVER_JWT_TOKEN_SECRET="<REDACTED>"
+#     # -----END SECRET ENV-----
 #
-#     1️⃣ SECRET ENV BLOCK
-#         # -----BEGIN SECRET ENV-----
-#         AWS_ACCESS_KEY_ID="<REDACTED>"
-#         AWS_SECRET_ACCESS_KEY="<REDACTED>"
-#         TABBY_WEBSERVER_JWT_TOKEN_SECRET="<REDACTED>"
-#         # -----END SECRET ENV-----
-#
-#     2️⃣ SSH KEY PLACEHOLDER
-#         # 🔒 <PRIVATE SSH KEY REDACTED>
-#
-#   The injector replaces these placeholders with real data.
+#     # 🔒 <PRIVATE SSH KEY REDACTED>
 #
 # ---------------------------------------------------------------------
 # SAFETY & DESIGN PRINCIPLES:
 #
-#   ✅  Works purely textually — no eval, no command execution.
-#   ✅  Modifies only clearly marked secret sections.
-#   ✅  Keeps logic, comments, and formatting intact.
-#   ✅  Safe to run multiple times (idempotent).
+#   ✅ Pure textual substitution — no eval, no execution.
+#   ✅ Only touches clearly marked secret sections.
+#   ✅ Keeps logic, comments, and formatting intact.
+#   ✅ Idempotent and predictable.
 #
 # ---------------------------------------------------------------------
 # USAGE EXAMPLES:
 #
 #   🔹 Dry run (print to stdout):
-#       ./scripts/inject-secrets.sh secrets/seed.sh secrets/seed.env
+#       ./utils/inject-secrets.sh secrets/seed.sh secrets/seed.key \
+#           secrets/id_tabby_bootstrap
 #
 #   🔹 Overwrite file in-place:
-#       ./scripts/inject-secrets.sh secrets/seed.sh secrets/seed.env \
-#           > secrets/seed.sh
-#
-#   🔹 With explicit key path:
-#       ./scripts/inject-secrets.sh secrets/seed.sh secrets/seed.env \
-#           secrets/my_custom_key > seed.sh
+#       ./utils/inject-secrets.sh secrets/seed.sh secrets/seed.key \
+#           secrets/id_tabby_bootstrap > secrets/seed.sh
 #
 # ---------------------------------------------------------------------
 # EXIT CODES:
@@ -101,18 +93,18 @@ set -euo pipefail
 # --------------------------------------------------------------
 # 🧭  Argument parsing and validation
 # --------------------------------------------------------------
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <redacted-seed.sh> <secrets.env> [private_key_file]" >&2
+if [[ $# -ne 3 ]]; then
+  echo "Usage: $0 <redacted-seed.sh> <secrets.key> <private_key_file>" >&2
   exit 1
 fi
 
 REDACTED_SEED="$1"
 SECRETS_FILE="$2"
-KEY_FILE="${3:-secrets/id_tabby_bootstrap}"
+KEY_FILE="$3"
 
 [[ -f "$REDACTED_SEED" ]] || { echo "❌ Template seed file not found: $REDACTED_SEED" >&2; exit 1; }
 [[ -f "$SECRETS_FILE" ]] || { echo "❌ Secrets file not found: $SECRETS_FILE" >&2; exit 1; }
-[[ -f "$KEY_FILE" ]] || { echo "❌ Private key file not found: $KEY_FILE" >&2; exit 1; }
+[[ -f "$KEY_FILE"    ]] || { echo "❌ Private key file not found: $KEY_FILE" >&2; exit 1; }
 
 # --------------------------------------------------------------
 # 🔐  Load environment secrets into an associative array
@@ -124,7 +116,11 @@ while IFS='=' read -r key value; do
 
   # Normalize key and value
   key="$(echo "$key" | xargs)"
-  value="$(echo "$value" | sed -E 's/^[[:space:]]*"?(.*?)"?[[:space:]]*$/\1/')"
+  value="$(echo "$value" | xargs)"
+
+  # Remove optional surrounding quotes
+  value="${value%\"}"
+  value="${value#\"}"
 
   SECRETS["$key"]="$value"
 done <"$SECRETS_FILE"
@@ -181,5 +177,4 @@ done <"$REDACTED_SEED"
 # --------------------------------------------------------------
 # ✅  End of script
 # --------------------------------------------------------------
-# Example log message for visibility:
 # echo "==> 💉 Injected ${#SECRETS[@]} secrets and one SSH key from ${SECRETS_FILE}" >&2

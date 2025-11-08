@@ -72,6 +72,8 @@
 
 set -euo pipefail
 
+echo "[strip-secrets.sh invoked]" >&2
+
 # -------------------------------------------------------------
 # 🧭 Optional interactive help (only shown without piped input)
 # -------------------------------------------------------------

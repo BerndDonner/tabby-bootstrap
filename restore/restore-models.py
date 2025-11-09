@@ -13,7 +13,7 @@
 #   - Finds the latest models_YYYY-MM-DD.tar.zst in s3://<bucket>/model-backups/
 #   - Downloads archive (+ .sha256 if present)
 #   - Verifies SHA256
-#   - Extracts into ~/tabbyclassmodels
+#   - Extracts into HOME (so 'tabbyclassmodels/models' ends under ~)
 # ==========================================================
 import os, argparse, tempfile, sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
@@ -21,8 +21,6 @@ from include.s3_utils import *
 
 def main():
     parser = argparse.ArgumentParser(description="Restore Tabby models ← Hetzner S3")
-    parser.add_argument("--dest", default=os.path.expanduser("~/tabbyclassmodels"),
-                        help="Destination base directory (default: ~/tabbyclassmodels)")
     parser.add_argument("--bucket", default=DEFAULT_BUCKET, help="S3 bucket name")
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help="S3 endpoint URL")
     parser.add_argument("--profile", default=DEFAULT_PROFILE, help="AWS profile name")
@@ -37,10 +35,11 @@ def main():
     log(f"☁️ Found latest model backup: {key}")
     archive = os.path.basename(key)
     checksum_key = key.replace(".tar.zst", ".tar.zst.sha256")
-    local_archive = os.path.join(tempfile.gettempdir(), archive)
+    tmpdir = tempfile.gettempdir()
+    local_archive = os.path.join(tmpdir, archive)
     local_checksum = local_archive + ".sha256"
 
-    download_file(s3, args.bucket, key, local_archive, progress=True)
+    download_file(s3, args.bucket, key, local_archive)
     have_checksum = True
     try:
         download_file(s3, args.bucket, checksum_key, local_checksum)
@@ -58,10 +57,8 @@ def main():
             log("❌ Checksum mismatch! Aborting.")
             return
 
-    dest = os.path.abspath(os.path.expanduser(args.dest))
-    os.makedirs(dest, exist_ok=True)
-    extract_archive(local_archive, dest)
-    log(f"🎉 Restore complete at {os.path.join(dest, 'models')}")
+    extract_archive_to_home(local_archive)
+    log(f"🎉 Restore complete under ~/tabbyclassmodels/models")
 
 if __name__ == "__main__":
     main()

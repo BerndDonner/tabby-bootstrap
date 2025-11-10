@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # ===============================================================
-# 💉 pre-commit: ensure secrets/seed.sh is filtered before commit
+# 💉 pre-commit: ensure all stripsecrets-filtered files are clean
 # ===============================================================
 set -euo pipefail
 
-TARGET="secrets/seed.sh"
+# Find staged files using the 'stripsecrets' filter
+FILES=$(git diff --cached --name-only \
+  | xargs -r git check-attr filter \
+  | awk -F: '/stripsecrets/ {print $1}' \
+  | sort -u)
 
-if [[ -f "$TARGET" ]]; then
-  if git check-attr filter "$TARGET" | grep -q stripsecrets; then
-    echo "==> Reapplying strip-secrets filter to $TARGET"
-    git add --renormalize "$TARGET"
+[[ -z "$FILES" ]] && exit 0  # nothing to do
+
+echo "==> Reapplying strip-secrets filter to:"
+for f in $FILES; do
+  if [[ -f "$f" ]]; then
+    echo "   • $f"
+    git add --renormalize "$f"
   fi
-fi
+done

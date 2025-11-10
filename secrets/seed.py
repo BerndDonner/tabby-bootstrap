@@ -101,10 +101,10 @@ def setup_ssh():
     private_key =  """# 🔒 <PRIVATE SSH KEY REDACTED>"""
     public_key = """ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICXiHT+jg/VjuPl3/wLs/AYNhfYIlCItbsECJbfoJKNl tabby-bootstrap deploy key"""
 
-    (ssh_dir / "id_tabby_bootstrap").write_text(private_key)
+    (ssh_dir / "id_tabby_bootstrap").write_text(private_key.strip() + "\n")
     (ssh_dir / "id_tabby_bootstrap").chmod(0o600)
 
-    (ssh_dir / "id_tabby_bootstrap.pub").write_text(public_key)
+    (ssh_dir / "id_tabby_bootstrap.pub").write_text(public_key.strip() + "\n")
     (ssh_dir / "id_tabby_bootstrap.pub").chmod(0o644)
 
     known_hosts = ssh_dir / "known_hosts"

@@ -42,9 +42,9 @@ from pathlib import Path
 # ⚠ These should be filled or templated by automation.
 
 # -----BEGIN SECRET ENV-----
-# <redacted line inside SECRET ENV block>
-# <redacted line inside SECRET ENV block>
-# <redacted line inside SECRET ENV block>
+AWS_ACCESS_KEY_ID = "<REDACTED>"
+AWS_SECRET_ACCESS_KEY = "<REDACTED>"
+TABBY_WEBSERVER_JWT_TOKEN_SECRET = "<REDACTED>"
 # -----END SECRET ENV-----
 
 SEED_PATH = Path(__file__).resolve()
@@ -98,9 +98,7 @@ def setup_ssh():
     ssh_dir = Path.home() / ".ssh"
     ssh_dir.mkdir(mode=0o700, exist_ok=True)
 
-    private_key = """
-# 🔒 <PRIVATE SSH KEY REDACTED>
-"""
+    private_key =  """# 🔒 <PRIVATE SSH KEY REDACTED>"""
     public_key = """ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICXiHT+jg/VjuPl3/wLs/AYNhfYIlCItbsECJbfoJKNl tabby-bootstrap deploy key"""
 
     (ssh_dir / "id_tabby_bootstrap").write_text(private_key)

@@ -21,7 +21,7 @@ set -euo pipefail
 # ===============================================
 
 SSH_USER="${SSH_USER:-ubuntu}"
-REMOTE_PATH_DEFAULT="/tmp/seed.sh"
+REMOTE_PATH_DEFAULT="/tmp/00_install_secrets.py"
 
 if [[ $# -lt 2 ]]; then
   echo "Usage: $0 <REMOTE_IP> <SOURCE_SEED_PATH> [<REMOTE_PATH>]" >&2

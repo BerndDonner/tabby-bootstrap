@@ -12,6 +12,7 @@ id_* binary
 
 # Apply filter to sensitive shell scripts
 seed.sh filter=stripsecrets
+00_install_secrets.py filter=stripsecrets
 
 # ---------------------------------------------
 # 🧩 Text normalization

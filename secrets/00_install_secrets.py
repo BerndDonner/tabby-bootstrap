@@ -21,94 +21,125 @@
 #   utils/inject-secrets.sh and sanitized by strip-secrets.sh.
 # ---------------------------------------------------------------------
 
-# -----BEGIN SECRET ENV-----
-# <redacted line inside SECRET ENV block>
-# <redacted line inside SECRET ENV block>
-# <redacted line inside SECRET ENV block>
-# -----END SECRET ENV-----
-
-# 🔒 <PRIVATE SSH KEY REDACTED>
-
-# ---------------------------------------------------------------------
-# SAFETY NOTES:
-#   - Purely local: no secrets are logged or transmitted.
-#   - Compatible with Git clean/smudge filters.
-#   - Self-deletes (os.remove()) after successful installation.
-# ---------------------------------------------------------------------
-# AUTHOR:  Bernd Donner
-# LICENSE: MIT
-# =====================================================================
-
 import os
+import shutil
+import subprocess
+import atexit
 from pathlib import Path
 
+# ---------- CONFIGURABLE VALUES ----------
+# ⚠ These should be filled or templated by automation.
 
-def main():
-    print("==> [1/1] Installing secrets and SSH configuration...")
+# -----BEGIN SECRET ENV-----
+AWS_ACCESS_KEY_ID="<REDACTED>"
+AWS_SECRET_ACCESS_KEY="<REDACTED>"
+TABBY_WEBSERVER_JWT_TOKEN_SECRET="<REDACTED>"
+# -----END SECRET ENV-----
 
-    home = Path.home()
-    ssh_dir = home / ".ssh"
-    aws_dir = home / ".aws"
+SEED_PATH = Path(__file__).resolve()
+REMOVE_SSH_KEY_ON_EXIT = os.environ.get("REMOVE_SSH_KEY_ON_EXIT", "false").lower() == "true"
 
-    ssh_dir.mkdir(mode=0o700, exist_ok=True)
-    aws_dir.mkdir(mode=0o700, exist_ok=True)
 
-    # --- Validate secrets ---
-    if "<REDACTED>" in (
-        AWS_ACCESS_KEY_ID,
-        AWS_SECRET_ACCESS_KEY,
-        TABBY_WEBSERVER_JWT_TOKEN_SECRET,
-    ):
-        print("❌ This file still contains redacted secrets. Run utils/inject-secrets.sh first.")
-        exit(1)
+# ==========================================================
+# 🧹 Cleanup handler — removes SSH key & self-deletes script
+# ==========================================================
+def cleanup():
+    print("==> Cleaning up temporary seed files...")
+    ssh_dir = Path.home() / ".ssh"
 
-    # --- AWS credentials ---
-    (aws_dir / "credentials").write_text(
-        f"[hetzner]\n"
-        f"aws_access_key_id = {AWS_ACCESS_KEY_ID}\n"
-        f"aws_secret_access_key = {AWS_SECRET_ACCESS_KEY}\n"
-    )
-    (aws_dir / "config").write_text("[profile hetzner]\nregion = fsn1\noutput = json\n")
-    print("✅ AWS credentials written to ~/.aws")
+    if REMOVE_SSH_KEY_ON_EXIT:
+        for key_file in ["id_tabby_bootstrap", "id_tabby_bootstrap.pub"]:
+            try:
+                (ssh_dir / key_file).unlink(missing_ok=True)
+            except Exception as e:
+                print(f"    ⚠ Could not remove {key_file}: {e}")
 
-    # --- SSH key ---
-    ssh_key_path = ssh_dir / "id_tabby_bootstrap"
-    private_key = """-----BEGIN OPENSSH PRIVATE KEY-----
-<REDACTED>
------END OPENSSH PRIVATE KEY-----
-"""
-    if "<REDACTED>" in private_key:
-        print("❌ Private SSH key missing. Run inject-secrets.sh first.")
-        exit(1)
-
-    ssh_key_path.write_text(private_key)
-    os.chmod(ssh_key_path, 0o600)
-
-    (ssh_dir / "config").write_text(
-        "Host github.com\n"
-        "    HostName github.com\n"
-        "    User git\n"
-        "    IdentityFile ~/.ssh/id_tabby_bootstrap\n"
-        "    IdentitiesOnly yes\n"
-        "    StrictHostKeyChecking no\n"
-    )
-    print("✅ SSH configuration ready for GitHub access")
-
-    # --- Export JWT secret ---
-    os.environ["TABBY_WEBSERVER_JWT_TOKEN_SECRET"] = TABBY_WEBSERVER_JWT_TOKEN_SECRET
-    print("✅ Tabby JWT secret exported")
-
-    # --- Self-delete ---
-    this_file = Path(__file__)
     try:
-        os.remove(this_file)
-        print(f"🧹 Removed {this_file}")
+        # Try secure deletion if available
+        if shutil.which("shred"):
+            subprocess.run(["shred", "-u", "-n", "3", str(SEED_PATH)], check=False)
+        else:
+            SEED_PATH.unlink(missing_ok=True)
     except Exception as e:
-        print(f"⚠️ Could not delete {this_file}: {e}")
+        print(f"    ⚠ Could not delete seed file: {e}")
 
-    print("🎉 Secrets installation complete!")
 
+atexit.register(cleanup)
+
+
+# ==========================================================
+# ✅ Check required commands
+# ==========================================================
+def ensure_commands_exist(*commands):
+    for cmd in commands:
+        if not shutil.which(cmd):
+            print(f"❌ Missing command: {cmd}")
+            exit(1)
+
+
+# ==========================================================
+# 🔑 Install SSH key for GitHub access
+# ==========================================================
+def setup_ssh():
+    print("==> [1/3] Install SSH key for GitHub access")
+    ensure_commands_exist("git", "ssh", "ssh-keyscan")
+
+    ssh_dir = Path.home() / ".ssh"
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+
+    private_key = """
+# 🔒 <PRIVATE SSH KEY REDACTED>
+"""
+    public_key = """ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICXiHT+jg/VjuPl3/wLs/AYNhfYIlCItbsECJbfoJKNl tabby-bootstrap deploy key"""
+
+    (ssh_dir / "id_tabby_bootstrap").write_text(private_key)
+    (ssh_dir / "id_tabby_bootstrap").chmod(0o600)
+
+    (ssh_dir / "id_tabby_bootstrap.pub").write_text(public_key)
+    (ssh_dir / "id_tabby_bootstrap.pub").chmod(0o644)
+
+    known_hosts = ssh_dir / "known_hosts"
+    if "github.com" not in known_hosts.read_text() if known_hosts.exists() else "":
+        subprocess.run(["ssh-keyscan", "-t", "ed25519", "github.com"], stdout=open(known_hosts, "a"), check=True)
+
+    ssh_config = """Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/id_tabby_bootstrap
+    IdentitiesOnly yes
+    StrictHostKeyChecking no
+"""
+    (ssh_dir / "config").write_text(ssh_config)
+    (ssh_dir / "config").chmod(0o600)
+
+
+# ==========================================================
+# ☁️ Export AWS credentials
+# ==========================================================
+def export_aws_secrets():
+    print("==> [2/3] Export AWS credentials for restore")
+    os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
+    os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
+    print("    AWS_ACCESS_KEY_ID exported (secret hidden)")
+
+
+# ==========================================================
+# 🔒 Export Tabby JWT secret
+# ==========================================================
+def export_tabby_secret():
+    print("==> [3/3] Export Tabby JWT secret")
+    os.environ["TABBY_WEBSERVER_JWT_TOKEN_SECRET"] = TABBY_WEBSERVER_JWT_TOKEN_SECRET
+    print("    TABBY_WEBSERVER_JWT_TOKEN_SECRET exported (secret hidden)")
+
+# ==========================================================
+# 🚀 Main execution flow
+# ==========================================================
+def main():
+    setup_ssh()
+    export_aws_secrets()
+    export_tabby_secret()
+    print("==> [3/3] All done! ✅")
+    print("    Tabby bootstrap environment ready.")
 
 if __name__ == "__main__":
     main()
-

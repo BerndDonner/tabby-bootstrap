@@ -21,7 +21,7 @@ set -euo pipefail
 
 SSH_USER="${SSH_USER:-ubuntu}"
 REMOTE_PATH_DEFAULT="/tmp/00_install_secrets.py"
-SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"  # change if you use another key
+SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/bernds-desktop}"  # change if you use another key
 
 # --- Argument check -----------------------------------------------------------
 if [[ $# -lt 2 ]]; then

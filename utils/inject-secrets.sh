@@ -1,78 +1,89 @@
 #!/usr/bin/env bash
 # =====================================================================
-# 🧹 strip-secrets.sh
+# 💉 inject-secrets.sh  (context-aware, 2025-11-10)
 # ---------------------------------------------------------------------
 # PURPOSE:
-#   Redact all sensitive information from a seed or bootstrap script
-#   before committing to Git. Designed as the inverse of
-#   inject-secrets.sh.
+#   Re-insert real secrets into a redacted seed.py / seed.sh template.
+#   The exact inverse of utils/strip-secrets.sh.
 #
-#   Redacts:
-#     1️⃣ Embedded OpenSSH or RSA private key blocks
-#     2️⃣ Environment variables within SECRET ENV blocks
-#     3️⃣ Inline secrets marked with  # @secret
+#   Restores:
+#     1️⃣ Environment variables inside a SECRET ENV block
+#     2️⃣ The embedded OpenSSH or RSA private key placeholder
 #
-#   Intended for use as a Git "clean" filter:
-#
-#       [filter "stripsecrets"]
-#           clean  = "utils/strip-secrets.sh"
-#           smudge = "cat"
+#   The script writes to stdout, so redirect output if you want to
+#   overwrite the original file.
 #
 # ---------------------------------------------------------------------
 # TYPICAL WORKFLOW:
 #
-#   1. The working copy contains the full seed.sh with real secrets.
-#   2. Git calls this script when committing to produce a sanitized
-#      version for storage in the repository.
-#   3. inject-secrets.sh later restores secrets locally when needed.
+#   1. Repository contains sanitized seed.py (no secrets)
+#   2. Local folder secrets/ contains:
+#        ├── seed.key              # KEY=VALUE pairs (unquoted or quoted)
+#        └── id_tabby_bootstrap    # private SSH key
+#
+#   3. Run from project root:
+#        ./utils/inject-secrets.sh secrets/seed.py secrets/seed.key \
+#            secrets/id_tabby_bootstrap > seed_filled.py
+#
+#   4. The resulting seed_filled.py is ready for local use or bootstrap.
 #
 # ---------------------------------------------------------------------
-# SUPPORTED MARKERS:
+# EXPECTED FILE FORMATS:
 #
-#   1️⃣ SECRET ENV BLOCK
+#   A) secrets/seed.key
+#      Simple KEY=VALUE pairs:
 #
-#       # -----BEGIN SECRET ENV-----
-#       AWS_ACCESS_KEY_ID = "ABC..."
-#       AWS_SECRET_ACCESS_KEY="DEF..."
-#       # -----END SECRET ENV-----
+#         AWS_ACCESS_KEY_ID=AKIA...
+#         AWS_SECRET_ACCESS_KEY=abcd...
+#         TABBY_WEBSERVER_JWT_TOKEN_SECRET=1234...
 #
-#     → becomes:
+#      - Lines beginning with # are ignored.
+#      - Quotes around values are optional and will be stripped.
 #
-#       AWS_ACCESS_KEY_ID = "<REDACTED>"
-#       AWS_SECRET_ACCESS_KEY = "<REDACTED>"
+#   B) secrets/id_tabby_bootstrap
+#      The raw OpenSSH or RSA private key file:
 #
-#   2️⃣ INLINE SECRET TAG
+#         -----BEGIN OPENSSH PRIVATE KEY-----
+#         ...
+#         -----END OPENSSH PRIVATE KEY-----
 #
-#       TABBY_WEBSERVER_JWT_TOKEN_SECRET="xyz"   # @secret
-#     → TABBY_WEBSERVER_JWT_TOKEN_SECRET = "<REDACTED>"
+# ---------------------------------------------------------------------
+# REDACTED TEMPLATE FORMAT:
 #
-#   3️⃣ EMBEDDED PRIVATE KEY BLOCKS
+#     # -----BEGIN SECRET ENV-----
+#     AWS_ACCESS_KEY_ID = "<REDACTED>"
+#     AWS_SECRET_ACCESS_KEY = "<REDACTED>"
+#     TABBY_WEBSERVER_JWT_TOKEN_SECRET = "<REDACTED>"
+#     # -----END SECRET ENV-----
 #
-#       -----BEGIN OPENSSH PRIVATE KEY-----
-#       ...
-#       -----END OPENSSH PRIVATE KEY-----
-#
-#     → replaced by:
-#       # 🔒 <PRIVATE SSH KEY REDACTED>
+#     private_key = """# 🔒 <PRIVATE SSH KEY REDACTED>"""
 #
 # ---------------------------------------------------------------------
 # SAFETY & DESIGN PRINCIPLES:
 #
-#   ✅ Explicit markers only — no guessing.
-#   ✅ Symmetric with inject-secrets.sh.
-#   ✅ Robust to indentation and spacing.
-#   ✅ Keeps logic, comments, and readability intact.
-#   ✅ Works both interactively (manual pipe) and via Git filters.
+#   ✅ Pure textual substitution — no eval, no execution.
+#   ✅ Handles both quoted and unquoted key placeholders.
+#   ✅ Only touches clearly marked secret sections.
+#   ✅ Keeps logic, comments, and formatting intact.
+#   ✅ Idempotent and predictable.
 #
 # ---------------------------------------------------------------------
-# MANUAL TEST:
+# USAGE EXAMPLES:
 #
-#   cat secrets/seed.sh | utils/strip-secrets.sh
+#   🔹 Dry run (print to stdout):
+#       ./utils/inject-secrets.sh secrets/seed.py secrets/seed.key \
+#           secrets/id_tabby_bootstrap
+#
+#   🔹 Overwrite file in-place:
+#       ./utils/inject-secrets.sh secrets/seed.py secrets/seed.key \
+#           secrets/id_tabby_bootstrap > secrets/seed.py
 #
 # ---------------------------------------------------------------------
 # EXIT CODES:
 #   0  success
-#   1  usage (no input)
+#   1  missing or unreadable input file
+#   2  syntax or substitution error
+#
 # ---------------------------------------------------------------------
 # AUTHOR:  Bernd Donner
 # LICENSE: MIT
@@ -81,95 +92,99 @@
 set -euo pipefail
 
 # --------------------------------------------------------------
-# 🧭 Optional interactive help (only shown without piped input)
+# 🧭  Argument parsing and validation
 # --------------------------------------------------------------
-if [ -t 0 ]; then
-  echo
-  echo "Usage: cat file | $(basename "$0")"
-  echo
-  echo "Redacts all known secret sections from the input file."
-  echo "Recognized markers:"
-  echo "  - # -----BEGIN SECRET ENV----- / # -----END SECRET ENV-----"
-  echo "  - embedded OpenSSH / RSA private keys"
-  echo "  - lines ending with  # @secret"
-  echo
-  exit 0
+if [[ $# -ne 3 ]]; then
+  echo "Usage: $0 <redacted-seed.py> <secrets.key> <private_key_file>" >&2
+  exit 1
 fi
 
+REDACTED_SEED="$1"
+SECRETS_FILE="$2"
+KEY_FILE="$3"
+
+[[ -f "$REDACTED_SEED" ]] || { echo "❌ Template seed file not found: $REDACTED_SEED" >&2; exit 1; }
+[[ -f "$SECRETS_FILE" ]] || { echo "❌ Secrets file not found: $SECRETS_FILE" >&2; exit 1; }
+[[ -f "$KEY_FILE"    ]] || { echo "❌ Private key file not found: $KEY_FILE" >&2; exit 1; }
+
 # --------------------------------------------------------------
-# 🔍 Main redaction logic
+# 🔐  Load environment secrets into an associative array
 # --------------------------------------------------------------
-awk '
-  BEGIN {
-    in_env = 0
-    in_key = 0
-  }
+declare -A SECRETS
+while IFS='=' read -r key value; do
+  # Skip comments and empty lines
+  [[ -z "${key// }" || "$key" =~ ^[[:space:]]*# ]] && continue
 
-  # ---------------------------------------------------------
-  # 1️⃣ Embedded OpenSSH / RSA private key
-  # ---------------------------------------------------------
-  /^[[:space:]]*[-]{5}BEGIN (OPENSSH|RSA) PRIVATE KEY[-]{5}/ {
-    in_key = 1
-    print "# 🔒 <PRIVATE SSH KEY REDACTED>"
-    next
-  }
+  # Normalize key and value
+  key="$(echo "$key" | xargs)"
+  value="$(echo "$value" | xargs)"
 
-  in_key {
-    if ($0 ~ /[-]{5}END (OPENSSH|RSA) PRIVATE KEY[-]{5}/) {
-      in_key = 0
-    }
-    next
-  }
+  # Remove optional surrounding quotes
+  value="${value%\"}"
+  value="${value#\"}"
 
-  # ---------------------------------------------------------
-  # 2️⃣ Secret ENV block markers
-  # ---------------------------------------------------------
-  /^# *[-]{5}BEGIN SECRET ENV[-]{5}/ {
-    in_env = 1
-    print
-    next
-  }
+  SECRETS["$key"]="$value"
+done <"$SECRETS_FILE"
 
-  /^# *[-]{5}END SECRET ENV[-]{5}/ {
-    in_env = 0
-    print
-    next
-  }
+# --------------------------------------------------------------
+# 🔑  Read private SSH key into memory
+# --------------------------------------------------------------
+PRIVATE_KEY_CONTENT="$(cat "$KEY_FILE")"
 
-  # Inside SECRET ENV block → redact variable assignments
-  in_env {
-    # Match: optional indent + optional "export" + VAR [spaces] = [spaces]
-    if (match($0, /^[[:space:]]*(export[[:space:]]+)?([A-Za-z0-9_]+)[[:space:]]*=/, m)) {
-      varname = m[2]
-      indent = ""
-      if (match($0, /^[[:space:]]+/, sp)) { indent = sp[0] }
-      print indent varname " = \"<REDACTED>\""
-    } else {
-      print "# <redacted line inside SECRET ENV block>"
-    }
-    next
-  }
+# --------------------------------------------------------------
+# 🧩  Injection loop — stream redacted seed → restored output
+# --------------------------------------------------------------
+in_env=0
 
-  # ---------------------------------------------------------
-  # 3️⃣ Inline @secret annotations
-  # ---------------------------------------------------------
-  /# *@secret[[:space:]]*$/ {
-    line = $0
-    sub(/[[:space:]]+# *@secret[[:space:]]*$/, "", line)
-    # Allow spaces around '='
-    n = match(line, /=/)
-    if (n > 0) {
-      pre = substr(line, 1, RSTART - 1)
-      sub(/[[:space:]]+$/, "", pre)
-      print pre " = \"<REDACTED>\""
-    } else {
-      print "# <redacted inline secret>"
-    }
-    next
-  }
+while IFS= read -r line || [[ -n "$line" ]]; do
+  # ----- BEGIN / END SECRET ENV markers -----
+  if [[ "$line" =~ ^#.*BEGIN[[:space:]]+SECRET[[:space:]]+ENV ]]; then
+    in_env=1
+    echo "$line"
+    continue
+  fi
+  if [[ "$line" =~ ^#.*END[[:space:]]+SECRET[[:space:]]+ENV ]]; then
+    in_env=0
+    echo "$line"
+    continue
+  fi
 
-  # ---------------------------------------------------------
-  # 4️⃣ Default: pass everything else unchanged
-  # ---------------------------------------------------------
-  { print }
-'
+  # Inside SECRET ENV block → replace each VAR="<REDACTED>"
+  if (( in_env )); then
+    if [[ "$line" =~ ^[[:space:]]*([A-Z0-9_]+)[[:space:]]*= ]]; then
+      var="${BASH_REMATCH[1]}"
+      if [[ -n "${SECRETS[$var]+_}" ]]; then
+        printf '%s = "%s"\n' "$var" "${SECRETS[$var]}"
+      else
+        echo "# ⚠️ No secret found for $var — left redacted" >&2
+        echo "$line"
+      fi
+    else
+      echo "$line"
+    fi
+    continue
+  fi
+
+  # ----------------------------------------------------------
+  # Replace SSH key placeholder (quoted or unquoted)
+  # ----------------------------------------------------------
+  if [[ "$line" == *"# 🔒 <PRIVATE SSH KEY REDACTED>"* ]]; then
+    if [[ "$line" =~ \"\"\"# ]]; then
+      # Triple-quoted form: preserve prefix before """ and reinsert key
+      prefix="${line%%\"\"\"#*}"
+      printf '%s"""%s"""\n' "$prefix" "$PRIVATE_KEY_CONTENT"
+    else
+      # Plain unquoted placeholder (legacy)
+      printf '%s\n' "$PRIVATE_KEY_CONTENT"
+    fi
+    continue
+  fi
+
+  # Default: pass through unchanged
+  echo "$line"
+done <"$REDACTED_SEED"
+
+# --------------------------------------------------------------
+# ✅  End of script
+# --------------------------------------------------------------
+# echo "==> 💉 Injected ${#SECRETS[@]} secrets and one SSH key from ${SECRETS_FILE}" >&2

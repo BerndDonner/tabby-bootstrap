@@ -5,11 +5,14 @@
 # PURPOSE:
 #   Clone or update the tabby-bootstrap repository on the instance.
 #
-# ---------------------------------------------------------------------
-# USAGE:
+# 🪄 USAGE (CLI mode):
 #   python3 setup/10_clone_repo.py
 #
-#   Expects a working SSH key in ~/.ssh/id_tabby_bootstrap.
+# 🧩 USAGE (Python module):
+#   from clone_repo import clone_repo
+#   clone_repo()
+#
+# Expects a working SSH key in ~/.ssh/id_tabby_bootstrap.
 # ---------------------------------------------------------------------
 # AUTHOR:  Bernd Donner
 # LICENSE: MIT
@@ -19,7 +22,8 @@ import subprocess
 from pathlib import Path
 
 
-def main():
+def clone_repo():
+    """Clone or update the tabby-bootstrap repository under ~/tabby-bootstrap."""
     print("==> [2/7] Clone or update tabby-bootstrap repository")
 
     repo_url = "git@github.com:BerndDonner/tabby-bootstrap.git"
@@ -38,5 +42,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-
+    clone_repo()

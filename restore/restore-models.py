@@ -4,10 +4,14 @@
 # ==========================================================
 # Designed for ephemeral GPU instances (Lambda, Hetzner, Scaleway)
 #
-# 🪄 USAGE:
+# 🪄 USAGE (CLI mode):
 #   export AWS_ACCESS_KEY_ID="your-access-key"
 #   export AWS_SECRET_ACCESS_KEY="your-secret-key"
-#   ./restore-models.py
+#   python3 restore-models.py
+#
+# 🧩 USAGE (Python module):
+#   from restore_models import restore_models
+#   restore_models()
 #
 # What it does:
 #   - Finds the latest models_YYYY-MM-DD.tar.zst in s3://<bucket>/model-backups/
@@ -15,19 +19,18 @@
 #   - Verifies SHA256
 #   - Extracts into HOME (so 'tabbyclassmodels/models' ends under ~)
 # ==========================================================
-import os, argparse, tempfile, sys
+import os
+import tempfile
+import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from include.s3_utils import *
 
-def main():
-    parser = argparse.ArgumentParser(description="Restore Tabby models ← Hetzner S3")
-    parser.add_argument("--bucket", default=DEFAULT_BUCKET, help="S3 bucket name")
-    parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT, help="S3 endpoint URL")
-    parser.add_argument("--profile", default=DEFAULT_PROFILE, help="AWS profile name")
-    args = parser.parse_args()
 
-    s3 = get_s3_client(args.profile, args.endpoint)
-    key = find_latest_backup(s3, args.bucket, "model-backups/")
+def restore_models(bucket=DEFAULT_BUCKET, endpoint=DEFAULT_ENDPOINT, profile=DEFAULT_PROFILE):
+    """Restore Tabby model data from Hetzner S3."""
+    s3 = get_s3_client(profile, endpoint)
+    key = find_latest_backup(s3, bucket, "model-backups/")
     if not key:
         log("❌ No model backup found.")
         return
@@ -39,10 +42,11 @@ def main():
     local_archive = os.path.join(tmpdir, archive)
     local_checksum = local_archive + ".sha256"
 
-    download_file(s3, args.bucket, key, local_archive)
+    download_file(s3, bucket, key, local_archive)
+
     have_checksum = True
     try:
-        download_file(s3, args.bucket, checksum_key, local_checksum)
+        download_file(s3, bucket, checksum_key, local_checksum)
     except botocore.exceptions.ClientError:
         log("⚠️ No checksum file found, skipping verification.")
         have_checksum = False
@@ -58,7 +62,8 @@ def main():
             return
 
     extract_archive_to_home(local_archive)
-    log(f"🎉 Restore complete under ~/tabbyclassmodels/models")
+    log("🎉 Restore complete under ~/tabbyclassmodels/models")
+
 
 if __name__ == "__main__":
-    main()
+    restore_models()

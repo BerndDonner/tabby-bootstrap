@@ -31,7 +31,6 @@
 import os
 import tempfile
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 import sys
 from include.s3_utils import (
     get_s3_client,
@@ -45,6 +44,7 @@ from include.s3_utils import (
     botocore,
     log,
 )
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 def restore_models(bucket=DEFAULT_BUCKET, endpoint=DEFAULT_ENDPOINT, profile=DEFAULT_PROFILE):

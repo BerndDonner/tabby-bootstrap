@@ -28,10 +28,11 @@
 #   TABBY_S3_ENDPOINT       – optional, overrides default endpoint
 # ==========================================================
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 import os
 import tempfile
-from pathlib import Path
-import sys
 from include.s3_utils import (
     get_s3_client,
     find_latest_backup,
@@ -44,7 +45,6 @@ from include.s3_utils import (
     botocore,
     log,
 )
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 
 def restore_models(bucket=DEFAULT_BUCKET, endpoint=DEFAULT_ENDPOINT, profile=DEFAULT_PROFILE):

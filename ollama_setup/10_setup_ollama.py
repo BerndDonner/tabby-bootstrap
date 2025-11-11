@@ -87,6 +87,16 @@ def ensure_ollama_installed():
     log("✅ Ollama successfully installed.")
 
 
+def configure_remote_access():
+    log("⚙️  Configuring Ollama to listen on all interfaces ...")
+    override_dir = Path("/etc/systemd/system/ollama.service.d")
+    override_dir.mkdir(parents=True, exist_ok=True)
+    override_file = override_dir / "override.conf"
+    override_file.write_text("[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"\n")
+    run(["sudo", "systemctl", "daemon-reload"])
+    run(["sudo", "systemctl", "restart", "ollama"])
+
+
 # ==========================================================
 # ⚙️  Ensure Ollama service or process is running
 # ==========================================================
@@ -148,6 +158,7 @@ def cleanup_unused_models():
 def main():
     log("🚀 Starting Ollama setup ...")
     ensure_ollama_installed()
+    configure_remote_access()
     ensure_ollama_running()
     ensure_models_installed()
     cleanup_unused_models()

@@ -1,0 +1,31 @@
+name: Tabby-Replacement
+version: 0.1.0
+schema: v1
+
+models:
+  - name: DeepSeek-Autocomplete
+    provider: ollama
+    model: deepseek-coder:6.7b
+    roles:
+      - autocomplete
+    autocompleteOptions:
+      debounceDelay: 250
+      maxPromptTokens: 1024
+      onlyMyCode: true
+    defaultCompletionOptions:
+      temperature: 0.3
+      stop:
+        - "\n"          # ⬅ stops multiline bleed-over in completions
+
+  - name: Qwen-Chat
+    provider: ollama
+    model: qwen2.5-coder:7b
+    roles:
+      - chat
+      - edit
+      - apply
+    defaultCompletionOptions:
+      temperature: 0.6
+      maxTokens: 1500
+      contextLength: 32000  # ⬅ match Qwen2.5 token window
+

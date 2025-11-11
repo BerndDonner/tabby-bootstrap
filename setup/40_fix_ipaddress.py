@@ -15,12 +15,9 @@
 # What it does:
 #   1. Reads $REMOTE_IP from the environment.
 #   2. Opens ~/tabbyclassmodels/ee/db.sqlite.
-#   3. Updates the table `server_setting` to set:
-#        key='base_url', value='http://<REMOTE_IP>:8080'
-#   4. Creates the entry if it does not exist.
-#
-# Environment:
-#   REMOTE_IP – required, e.g. 192.168.1.42
+#   3. Updates the column `network_external_url`
+#      in the table `server_setting` with:
+#        http://<REMOTE_IP>:8080
 # ==========================================================
 
 import sys
@@ -35,7 +32,7 @@ def log(msg: str):
 
 
 def fix_ipaddress():
-    """Update Tabby base_url in server_setting table."""
+    """Update Tabby network_external_url in server_setting table."""
     remote_ip = os.getenv("REMOTE_IP")
     if not remote_ip:
         log("❌ REMOTE_IP environment variable not set.")
@@ -47,30 +44,17 @@ def fix_ipaddress():
         return False
 
     new_url = f"http://{remote_ip}:8080"
-    log(f"🌍 Setting Tabby base_url to {new_url}")
+    log(f"🌍 Setting Tabby network_external_url to {new_url}")
 
     try:
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
 
-        cur.execute("SELECT COUNT(*) FROM server_setting WHERE key='base_url'")
-        exists = cur.fetchone()[0] > 0
-
-        if exists:
-            cur.execute(
-                "UPDATE server_setting SET value=? WHERE key='base_url'",
-                (new_url,),
-            )
-            log("🔁 Updated existing base_url entry.")
-        else:
-            cur.execute(
-                "INSERT INTO server_setting (key, value) VALUES ('base_url', ?)",
-                (new_url,),
-            )
-            log("🆕 Created new base_url entry.")
-
+        # Update the single-row table
+        cur.execute("UPDATE server_setting SET network_external_url = ? WHERE id = 1", (new_url,))
         conn.commit()
         conn.close()
+
         log("✅ IP address updated successfully.")
         return True
 
@@ -88,4 +72,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

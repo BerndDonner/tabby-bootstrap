@@ -1,32 +1,28 @@
 #!/usr/bin/env python3
 # =====================================================================
-# 🧠  10_setup_ollama.py — Install Ollama and Required Models
+# 🧠  10_setup_ollama.py — Install and Configure Ollama for Tabby
 # =====================================================================
 # PURPOSE:
-#   Bootstraps Ollama on a fresh GPU instance and ensures that
-#   required models for Tabby/Continue are downloaded.
+#   Bootstraps a fresh GPU instance with Ollama and the required models
+#   for Tabby / Continue integration.
 #
 # ACTIONS:
 #   1. Install Ollama if missing.
-#   2. Ensure Ollama service (systemd or manual) is running.
-#   3. Pull required models:
+#   2. Configure Ollama to listen on all interfaces (0.0.0.0).
+#   3. Ensure Ollama service (systemd or manual) is running.
+#   4. Pull required models:
 #        - deepseek-coder:6.7b  (autocomplete)
 #        - qwen2.5-coder:7b     (chat & reasoning)
-#   4. Optionally remove unused or legacy models.
-#   5. Print next-step instructions for Continue/VS Code setup.
+#   5. Remove any unused models.
 #
-# CLI:
-#   python3 ollama_setup/10_setup_ollama.py
-#
-# FUNCTIONAL USE:
-#   from ollama_setup import 10_setup_ollama
-#   10_setup_ollama.main()
+# CAN BE RUN:
+#   - Standalone:  python3 ollama_setup/10_setup_ollama.py
+#   - From code:   from ollama_setup import 10_setup_ollama; 10_setup_ollama.main()
 # =====================================================================
 
 import subprocess
 import shutil
 import sys
-import os
 from pathlib import Path
 
 # ==========================================================
@@ -36,7 +32,6 @@ REQUIRED_MODELS = {
     "deepseek-coder:6.7b": "autocomplete",
     "qwen2.5-coder:7b": "chat",
 }
-
 
 # ==========================================================
 # 🧩 Utility helpers
@@ -66,6 +61,14 @@ def run(cmd: list[str], check=True, capture_output=False):
         return ""
 
 
+def sudo_write(path: Path, content: str):
+    """Create parent dir and write file as root using sudo."""
+    run(["sudo", "mkdir", "-p", str(path.parent)])
+    tmp = Path("/tmp") / (path.name + ".tmp")
+    tmp.write_text(content)
+    run(["sudo", "mv", str(tmp), str(path)])
+
+
 # ==========================================================
 # 🧱 Install Ollama (if missing)
 # ==========================================================
@@ -75,33 +78,43 @@ def ensure_ollama_installed():
         return
 
     log("⬇️  Ollama not found — installing now ...")
-    run(
-        ["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
-        check=True,
-    )
+    run(["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"])
 
     if not shutil.which("ollama"):
-        log("❌ Installation failed: Ollama binary not found after install.")
+        log("❌ Installation failed: Ollama binary still missing.")
         sys.exit(1)
 
     log("✅ Ollama successfully installed.")
 
 
+# ==========================================================
+# ⚙️  Configure remote access (systemd override)
+# ==========================================================
 def configure_remote_access():
-    log("⚙️  Configuring Ollama to listen on all interfaces ...")
+    log("⚙  Configuring Ollama to listen on all interfaces ...")
+    if not shutil.which("systemctl"):
+        log("ℹ️ systemd not present; skipping override (manual start mode).")
+        return
+
     override_dir = Path("/etc/systemd/system/ollama.service.d")
-    override_dir.mkdir(parents=True, exist_ok=True)
     override_file = override_dir / "override.conf"
-    override_file.write_text("[Service]\nEnvironment=\"OLLAMA_HOST=0.0.0.0\"\n")
+    desired = '[Service]\nEnvironment="OLLAMA_HOST=0.0.0.0"\n'
+
+    current = run(["sudo", "cat", str(override_file)], check=False, capture_output=True)
+    if current == desired:
+        log("✅ systemd override already in place.")
+        return
+
+    sudo_write(override_file, desired)
     run(["sudo", "systemctl", "daemon-reload"])
     run(["sudo", "systemctl", "restart", "ollama"])
+    log("✅ systemd override applied and service restarted.")
 
 
 # ==========================================================
 # ⚙️  Ensure Ollama service or process is running
 # ==========================================================
 def ensure_ollama_running():
-    # try systemd first
     if shutil.which("systemctl"):
         status = run(["systemctl", "is-active", "ollama"], check=False, capture_output=True)
         if status.strip() != "active":
@@ -111,7 +124,6 @@ def ensure_ollama_running():
             log("✅ Ollama systemd service is active.")
         return
 
-    # fallback: check if process is running
     ps = run(["ps", "-A"], capture_output=True)
     if "ollama" not in ps:
         log("⚙️  Starting Ollama manually in background ...")
@@ -163,7 +175,7 @@ def main():
     ensure_models_installed()
     cleanup_unused_models()
 
-    log("\n🎉 Ollama models ready!")
+    log("\n🎉 Ollama setup complete! Models ready:")
     for model, role in REQUIRED_MODELS.items():
         log(f"   ➤ {model:<20} — {role}")
 

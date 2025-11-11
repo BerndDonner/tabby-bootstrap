@@ -17,7 +17,7 @@ from pathlib import Path
 import os
 import sys
 from setup.config import DATA_ROOT, MODEL_ROOT
-
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 def log(msg: str):
     print(msg, flush=True)

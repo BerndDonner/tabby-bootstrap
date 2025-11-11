@@ -35,6 +35,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime, UTC
 from email.message import EmailMessage
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # ---------------------------------------------------------------------
 # Configuration

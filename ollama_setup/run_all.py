@@ -3,22 +3,7 @@
 # 🧩  run_all.py — Execute All Setup Steps Sequentially
 # ==========================================================
 # Automatically discovers and runs all numbered setup scripts
-# (e.g. 10_restore_db.py, 20_restore_models.py, …).
-#
-# 💡 Usage:
-#     python3 run_all.py
-#
-# Behavior:
-#   - Sorts all scripts in this directory by numeric prefix.
-#   - Imports each script as a module.
-#   - Calls its `main()` function directly (no subprocess).
-#   - Prints progress in the form (1/7), (2/7), etc.
-#   - Stops immediately if any step raises an exception
-#     or exits with a nonzero status.
-#
-# Environment:
-#   Must have all required env vars set for the individual
-#   scripts (e.g. AWS credentials, REMOTE_IP, secrets, etc.).
+# in *this* directory (works from any directory name).
 # ==========================================================
 
 import importlib
@@ -37,7 +22,6 @@ def discover_scripts():
     modules = []
     for module_info in pkgutil.iter_modules([str(setup_dir)]):
         name = module_info.name
-        # Match numbered prefix files only
         if name[:2].isdigit() and "_" in name:
             modules.append(name)
     return sorted(modules, key=lambda n: int(n.split("_")[0]))
@@ -45,6 +29,8 @@ def discover_scripts():
 
 def main():
     """Main orchestrator."""
+    setup_dir = Path(__file__).parent
+    package_name = setup_dir.name  # ← derive dynamically (e.g. "ollama_setup")
     scripts = discover_scripts()
     total = len(scripts)
 
@@ -57,13 +43,12 @@ def main():
     for i, name in enumerate(scripts, start=1):
         log(f"=== ({i}/{total}) Running {name} ===")
         try:
-            mod = importlib.import_module(f"setup.{name}")
+            mod = importlib.import_module(f"{package_name}.{name}")
             if hasattr(mod, "main"):
                 mod.main()
             else:
                 log(f"⚠️  Module {name} has no main() function — skipped.")
         except SystemExit as e:
-            # Propagate nonzero exit codes to stop the chain
             if e.code != 0:
                 log(f"❌ {name} exited with code {e.code}. Stopping.")
                 sys.exit(e.code)

@@ -13,10 +13,10 @@
 #     /tmp/tabby_image.txt
 # ==========================================================
 
-import subprocess
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import subprocess
 
 def log(msg: str):
     print(msg, flush=True)

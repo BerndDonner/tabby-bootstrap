@@ -12,12 +12,12 @@
 #   Uses DATA_ROOT and MODEL_ROOT from config.py
 # ==========================================================
 
-import subprocess
-from pathlib import Path
-import os
 import sys
-from setup.config import DATA_ROOT, MODEL_ROOT
+from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import subprocess
+import os
+from setup.config import DATA_ROOT, MODEL_ROOT
 
 def log(msg: str):
     print(msg, flush=True)

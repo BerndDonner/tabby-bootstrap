@@ -24,18 +24,18 @@
 #   Database is expected at ~/tabbyclassmodels/ee/db.sqlite
 # ==========================================================
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 import os
 import re
 import csv
-import sys
 import smtplib
 import secrets
 import sqlite3
 import subprocess
-from pathlib import Path
 from datetime import datetime, UTC
 from email.message import EmailMessage
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # ---------------------------------------------------------------------
 # Configuration

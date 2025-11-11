@@ -17,10 +17,10 @@
 #   - PORT, DATA_ROOT, MODEL_ROOT, CONTAINER_NAME (optional)
 # ==========================================================
 
-import os
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import os
 import subprocess
 from setup.config import (
     DATA_ROOT,

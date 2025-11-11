@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 # =====================================================================
-# 🧠  10_setup_ollama.py — Prepare Ollama Models for Continue/Tabby
+# 🧠  10_setup_ollama.py — Install Ollama and Required Models
 # =====================================================================
 # PURPOSE:
-#   Installs and verifies required Ollama models on a GPU instance.
-#   Intended for Hetzner / Lambda / Scaleway ephemeral deployments.
+#   Bootstraps Ollama on a fresh GPU instance and ensures that
+#   required models for Tabby/Continue are downloaded.
 #
 # ACTIONS:
-#   1. Ensure Ollama is installed and running.
-#   2. Pull required models if missing:
+#   1. Install Ollama if missing.
+#   2. Ensure Ollama service (systemd or manual) is running.
+#   3. Pull required models:
 #        - deepseek-coder:6.7b  (autocomplete)
 #        - qwen2.5-coder:7b     (chat & reasoning)
-#   3. Remove any unused or legacy models (optional cleanup).
-#   4. Print next-step instructions for VS Code Continue setup.
+#   4. Optionally remove unused or legacy models.
+#   5. Print next-step instructions for Continue/VS Code setup.
 #
-# USAGE:
-#   python3 ollama/10_setup_ollama.py
+# CLI:
+#   python3 ollama_setup/10_setup_ollama.py
 #
-# ---------------------------------------------------------------------
-# DEPENDENCIES:
-#   - ollama must already be installed and active (systemd or manual)
-#   - firewall ports already open (done on Lambda panel)
-# ---------------------------------------------------------------------
+# FUNCTIONAL USE:
+#   from ollama_setup import 10_setup_ollama
+#   10_setup_ollama.main()
+# =====================================================================
 
 import subprocess
 import shutil
 import sys
+import os
 from pathlib import Path
 
 # ==========================================================
@@ -35,6 +36,7 @@ REQUIRED_MODELS = {
     "deepseek-coder:6.7b": "autocomplete",
     "qwen2.5-coder:7b": "chat",
 }
+
 
 # ==========================================================
 # 🧩 Utility helpers
@@ -59,23 +61,53 @@ def run(cmd: list[str], check=True, capture_output=False):
             log(e.stdout)
         if e.stderr:
             log(e.stderr)
-        sys.exit(1)
+        if check:
+            sys.exit(1)
+        return ""
 
 
 # ==========================================================
-# ⚙️  Check Ollama installation
+# 🧱 Install Ollama (if missing)
+# ==========================================================
+def ensure_ollama_installed():
+    if shutil.which("ollama"):
+        log("✅ Ollama binary already present.")
+        return
+
+    log("⬇️  Ollama not found — installing now ...")
+    run(
+        ["bash", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+        check=True,
+    )
+
+    if not shutil.which("ollama"):
+        log("❌ Installation failed: Ollama binary not found after install.")
+        sys.exit(1)
+
+    log("✅ Ollama successfully installed.")
+
+
+# ==========================================================
+# ⚙️  Ensure Ollama service or process is running
 # ==========================================================
 def ensure_ollama_running():
-    if not shutil.which("ollama"):
-        log("❌ Ollama binary not found in PATH.")
-        log("   Install via: curl -fsSL https://ollama.com/install.sh | sh")
-        sys.exit(1)
+    # try systemd first
+    if shutil.which("systemctl"):
+        status = run(["systemctl", "is-active", "ollama"], check=False, capture_output=True)
+        if status.strip() != "active":
+            log("⚙️  Ollama service not active — attempting to start...")
+            run(["sudo", "systemctl", "start", "ollama"], check=False)
+        else:
+            log("✅ Ollama systemd service is active.")
+        return
 
-    status = run(["systemctl", "is-active", "ollama"], check=False, capture_output=True)
-    if status.strip() != "active":
-        log("⚠️ Ollama service not active — attempting to start...")
-        run(["sudo", "systemctl", "start", "ollama"], check=False)
-    log("✅ Ollama service is running.")
+    # fallback: check if process is running
+    ps = run(["ps", "-A"], capture_output=True)
+    if "ollama" not in ps:
+        log("⚙️  Starting Ollama manually in background ...")
+        subprocess.Popen(["ollama", "serve"])
+    else:
+        log("✅ Ollama process already running.")
 
 
 # ==========================================================
@@ -83,19 +115,19 @@ def ensure_ollama_running():
 # ==========================================================
 def ensure_models_installed():
     existing = run(["ollama", "list"], capture_output=True).splitlines()
-    existing_models = {line.split()[0] for line in existing if line.strip()}
+    existing_models = {line.split()[0] for line in existing if line.strip() and not line.startswith("NAME")}
 
     for model, role in REQUIRED_MODELS.items():
         if model in existing_models:
             log(f"✅ {model} ({role}) already installed.")
         else:
-            log(f"⬇️ Pulling {model} for {role} ... this may take several minutes.")
+            log(f"⬇️  Pulling {model} for {role} — this may take several minutes ...")
             run(["ollama", "pull", model])
             log(f"✅ {model} installed.")
 
 
 # ==========================================================
-# 🧹  Remove unused models
+# 🧹  Remove unused models (optional)
 # ==========================================================
 def cleanup_unused_models():
     log("🧹 Checking for unused models ...")
@@ -115,13 +147,15 @@ def cleanup_unused_models():
 # ==========================================================
 def main():
     log("🚀 Starting Ollama setup ...")
+    ensure_ollama_installed()
     ensure_ollama_running()
     ensure_models_installed()
     cleanup_unused_models()
 
     log("\n🎉 Ollama models ready!")
-    log("   ➤ deepseek-coder:6.7b  — autocomplete")
-    log("   ➤ qwen2.5-coder:7b     — chat")
+    for model, role in REQUIRED_MODELS.items():
+        log(f"   ➤ {model:<20} — {role}")
+
     log("\n🧩 Next step:")
     log("   1. On your local machine, open VS Code.")
     log("   2. Install the Continue extension (if not yet installed).")
@@ -132,4 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

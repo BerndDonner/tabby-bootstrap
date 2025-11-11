@@ -31,6 +31,8 @@
 import os
 import tempfile
 import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 from include.s3_utils import (
     get_s3_client,
     find_latest_backup,

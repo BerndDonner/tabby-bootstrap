@@ -9,15 +9,18 @@
 #     • 00_install_secrets.py
 #     • 10_clone_repo.py
 #
-#   It prepares a new instance for full deployment by performing:
+#   Mandatory steps performed:
 #     1. Installing the deploy SSH key into ~/.ssh
-#     2. Exporting AWS credentials (optional)
-#     3. Exporting TABBY_WEBSERVER_JWT_TOKEN_SECRET (optional)
-#     4. Cloning or updating the tabby-bootstrap repository
-#     5. Automatically running one of the setup sequences:
+#     2. Exporting Cloudflare DNS config for ai.donner-lab.org
+#     3. Cloning or updating the tabby-bootstrap repository
+#     4. Automatically running one of the setup sequences:
 #          - ~/tabby-bootstrap/ollama_setup/run_all.py   (default)
 #          - ~/tabby-bootstrap/tabby_setup/run_all.py    (if adapted)
-#     6. Removing itself on completion for a clean environment
+#     5. Finalizing and leaving a clean bootstrap environment
+#
+#   Optional extras (not counted in the [1/5..5/5] progress):
+#     - Exporting AWS credentials
+#     - Exporting TABBY_WEBSERVER_JWT_TOKEN_SECRET
 #
 # ---------------------------------------------------------------------
 # USAGE:
@@ -35,9 +38,13 @@
 #
 # ---------------------------------------------------------------------
 # NOTES:
+#   - Cloudflare secrets are required for automatic DNS updates
+#     via downstream scripts in ollama_setup/tabby_setup.
 #   - AWS and JWT secrets are optional if handled elsewhere.
 #   - Uses "StrictHostKeyChecking accept-new" for first-time SSH safety.
-#   - Supports automatic cleanup and self-deletion.
+#   - Supports automatic cleanup and self-deletion via atexit.
+#   - Only sets environment variables; all real work happens in
+#     tabby-bootstrap/{ollama_setup,tabby_setup}.
 # ---------------------------------------------------------------------
 # AUTHOR:  Bernd Donner
 # LICENSE: MIT
@@ -57,8 +64,11 @@ from pathlib import Path
 AWS_ACCESS_KEY_ID = "<REDACTED>"
 AWS_SECRET_ACCESS_KEY = "<REDACTED>"
 TABBY_WEBSERVER_JWT_TOKEN_SECRET = "<REDACTED>"
+CF_API_TOKEN = "<REDACTED>"
+CF_ZONE_ID = "<REDACTED>"
 # -----END SECRET ENV-----
 
+CF_DNS_NAME = "ai.donner-lab.org"
 SEED_PATH = Path(__file__).resolve()
 REMOVE_SSH_KEY_ON_EXIT = os.environ.get("REMOVE_SSH_KEY_ON_EXIT", "false").lower() == "true"
 
@@ -146,7 +156,7 @@ def setup_ssh():
 # ==========================================================
 def export_aws_secrets():
     """Export AWS credentials to environment variables."""
-    print("==> [2/5] Exporting AWS credentials for restore...")
+    print("==> Exporting AWS credentials for restore (optional)...")
     os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
     os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
     print("    ✅ AWS_ACCESS_KEY_ID exported (secret hidden)")
@@ -157,9 +167,29 @@ def export_aws_secrets():
 # ==========================================================
 def export_tabby_secret():
     """Export Tabby JWT secret for runtime use."""
-    print("==> [3/5] Exporting Tabby JWT token secret...")
+    print("==> Exporting Tabby JWT token secret (optional)...")
     os.environ["TABBY_WEBSERVER_JWT_TOKEN_SECRET"] = TABBY_WEBSERVER_JWT_TOKEN_SECRET
     print("    ✅ TABBY_WEBSERVER_JWT_TOKEN_SECRET exported (secret hidden)")
+
+
+# ==========================================================
+# 🌐 Export Cloudflare DNS config
+# ==========================================================
+def export_cloudflare_secrets():
+    """
+    Export Cloudflare-related configuration to environment variables.
+
+    These are later used by scripts in ollama_setup/tabby_setup to
+    update ai.donner-lab.org → REMOTE_IP via Cloudflare API.
+    """
+    print("==> [2/5] Exporting Cloudflare DNS configuration...")
+    if CF_API_TOKEN and CF_ZONE_ID:
+        os.environ["CF_API_TOKEN"] = CF_API_TOKEN
+        os.environ["CF_ZONE_ID"] = CF_ZONE_ID
+        os.environ["CF_DNS_NAME"] = CF_DNS_NAME
+        print("    ✅ CF_API_TOKEN / CF_ZONE_ID / CF_DNS_NAME exported (secrets hidden)")
+    else:
+        print("    ⚠️  CF_API_TOKEN / CF_ZONE_ID not set — Cloudflare DNS updates will not work.")
 
 
 # ==========================================================
@@ -167,7 +197,7 @@ def export_tabby_secret():
 # ==========================================================
 def clone_repo():
     """Clone or update the tabby-bootstrap repository."""
-    print("==> [4/5] Cloning or updating tabby-bootstrap repository...")
+    print("==> [3/5] Cloning or updating tabby-bootstrap repository...")
     ensure_commands_exist("git")
 
     repo_url = "git@github.com:BerndDonner/tabby-bootstrap.git"
@@ -195,7 +225,7 @@ def auto_run_tabby():
     if not setup_path.exists():
         print(f"❌ Could not find {setup_path}, skipping Tabby setup.")
         return
-    print("🚀 Running full Tabby setup via run_all.py ...")
+    print("==> [4/5] Running full Tabby setup via run_all.py ...")
     subprocess.run(["python3", str(setup_path)], cwd=setup_path.parent, check=True)
 
 
@@ -208,7 +238,7 @@ def auto_run_ollama():
     if not setup_path.exists():
         print(f"❌ Could not find {setup_path}, skipping Ollama setup.")
         return
-    print("🚀 Running full Ollama setup via run_all.py ...")
+    print("==> [4/5] Running full Ollama setup via run_all.py ...")
     subprocess.run(["python3", str(setup_path)], cwd=setup_path.parent, check=True)
 
 
@@ -218,9 +248,10 @@ def auto_run_ollama():
 def main():
     """Main bootstrap flow for initializing the Tabby/Ollama environment."""
     setup_ssh()
+    export_cloudflare_secrets()
     # export_aws_secrets()        # optional
-    clone_repo()
     # export_tabby_secret()       # optional
+    clone_repo()
 
     if os.environ.get("DEBUG", "0") == "1":
         print("🧩 Debug mode active: skipping automatic run_all.py execution.")

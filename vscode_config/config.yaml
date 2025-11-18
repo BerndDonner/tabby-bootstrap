@@ -6,7 +6,7 @@ models:
   - name: DeepSeek-Autocomplete
     provider: ollama
     model: deepseek-coder:6.7b
-    apiBase: http://129.213.83.14:11434
+    apiBase: http://ai.donner-lab.org:11434
     roles:
       - autocomplete
     autocompleteOptions:
@@ -21,7 +21,7 @@ models:
   - name: Qwen-Chat
     provider: ollama
     model: qwen2.5-coder:7b
-    apiBase: http://129.213.83.14:11434
+    apiBase: http://ai.donner-lab.org:11434
     roles:
       - chat
       - edit

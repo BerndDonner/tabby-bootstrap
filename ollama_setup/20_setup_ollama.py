@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =====================================================================
-# 🧠  10_setup_ollama.py — Install and Configure Ollama for Tabby
+# 🧠  20_setup_ollama.py — Install and Configure Ollama for Tabby
 # =====================================================================
 # PURPOSE:
 #   Bootstraps a fresh GPU instance with Ollama and the required models

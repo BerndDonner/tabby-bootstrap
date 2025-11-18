@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =====================================================================
-# 🌐  20_update_dns.py — Update Cloudflare DNS for AI Endpoint
+# 🌐  10_update_dns.py — Update Cloudflare DNS for AI Endpoint
 # =====================================================================
 # PURPOSE:
 #   Update the Cloudflare A record for the public AI endpoint
@@ -22,8 +22,8 @@
 #
 #     3. ollama_setup/run_all.py (remote instance)
 #        - Discovers and runs numbered setup scripts:
-#            10_setup_ollama.py
-#            20_update_dns.py   ← THIS SCRIPT
+#            10_update_dns.py   ← THIS SCRIPT
+#            20_setup_ollama.py
 #
 # ACTIONS:
 #   1. Read environment variables:

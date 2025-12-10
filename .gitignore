@@ -2,6 +2,14 @@
 # 🧩 Bootstrap repository: Ignore local + secret files
 # ---------------------------------------------
 
+# ---------------------------------------------------------------------
+# Generated local seed (never commit)
+# ---------------------------------------------------------------------
+# The redacted template is tracked:
+#   secrets/seed_stripped.py
+# The injected local file is intentionally untracked:
+secrets/seed.py
+
 # 🧠 Decrypted environment files (never commit)
 .env
 .env.*

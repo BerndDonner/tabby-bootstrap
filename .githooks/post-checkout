@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# ===============================================================
+# 🧪 post-checkout: re-inject secrets after switching branches
+# ---------------------------------------------------------------
+# This hook supports the "redacted → injected" workflow:
+#   - Track/edit: secrets/stripped-seed.py
+#   - Generate:   secrets/seed.py (local-only)
+#
+# It runs after checkout and keeps the local generated seed fresh.
+# ===============================================================
+set -euo pipefail
+
+if [[ -f "secrets/stripped-seed.py" \
+   && -f "secrets/seed.key" \
+   && -f "secrets/id_tabby_bootstrap" ]]; then
+  echo "==> Re-injecting secrets into secrets/seed.py (post-checkout)"
+  ./utils/inject-secrets.sh \
+    secrets/stripped-seed.py \
+    secrets/seed.key \
+    secrets/id_tabby_bootstrap \
+    secrets/seed.py
+fi

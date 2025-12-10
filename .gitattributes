@@ -2,17 +2,10 @@
 # 🔐 Secrets and binary safety
 # ---------------------------------------------
 
-# Treat encrypted secrets as binary blobs
-secrets/*.enc filter=stripsecrets diff=off merge=ours binary
-
 # Never show diffs or attempt merges for private keys/certs
 *.pem binary
 *.key binary
 id_* binary
-
-# Apply filter to sensitive shell scripts
-seed.sh filter=stripsecrets
-seed.py filter=stripsecrets
 
 # ---------------------------------------------
 # 🧩 Text normalization

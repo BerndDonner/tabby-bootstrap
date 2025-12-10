@@ -1,21 +1,12 @@
 #!/usr/bin/env bash
-# ===============================================================
-# 💉 pre-commit: ensure all stripsecrets-filtered files are clean
-# ===============================================================
+# --------------------------------------------------------------
+# 🧯 Safety guard: never commit generated local seed.py
+# --------------------------------------------------------------
 set -euo pipefail
 
-# Find staged files using the 'stripsecrets' filter
-FILES=$(git diff --cached --name-only \
-  | xargs -r git check-attr filter \
-  | awk -F: '/stripsecrets/ {print $1}' \
-  | sort -u)
-
-[[ -z "$FILES" ]] && exit 0  # nothing to do
-
-echo "==> Reapplying strip-secrets filter to:"
-for f in $FILES; do
-  if [[ -f "$f" ]]; then
-    echo "   • $f"
-    git add --renormalize "$f"
-  fi
-done
+# Never allow committing the generated local seed
+if git diff --cached --name-only | grep -q '^secrets/seed.py$'; then
+  echo "❌ secrets/seed.py is generated and must not be committed."
+  echo "   Edit and commit secrets/seed_stripped.py instead."
+  exit 1
+fi

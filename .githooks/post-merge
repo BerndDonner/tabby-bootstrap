@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# ===============================================================
+# 🧪 post-merge: re-inject secrets after merges/pulls
+# ---------------------------------------------------------------
+# Ensures that after `git pull` the generated local seed is updated.
+# ===============================================================
+set -euo pipefail
+
+if [[ -f "secrets/stripped-seed.py" \
+   && -f "secrets/seed.key" \
+   && -f "secrets/id_tabby_bootstrap" ]]; then
+  echo "==> Re-injecting secrets into secrets/seed.py (post-merge)"
+  ./utils/inject-secrets.sh \
+    secrets/stripped-seed.py \
+    secrets/seed.key \
+    secrets/id_tabby_bootstrap \
+    secrets/seed.py
+fi

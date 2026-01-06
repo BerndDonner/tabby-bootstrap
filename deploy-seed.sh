@@ -50,7 +50,7 @@ set -euo pipefail
 
 SSH_USER="${SSH_USER:-ubuntu}"
 REMOTE_PATH_DEFAULT="/tmp/seed.py"
-SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/bernds-desktop}"  # change if you use another key
+SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_tabby_bootstrap}"  # change if you use another key
 
 # Behaviour flags (local defaults; changed via CLI flags)
 DEBUG_MODE="0"          # 1 → run seed.py with DEBUG=1 on remote

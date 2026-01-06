@@ -77,10 +77,11 @@ REMOVE_SSH_KEY_ON_EXIT = os.environ.get("REMOVE_SSH_KEY_ON_EXIT", "false").lower
 # 🧹 Cleanup handler — removes SSH key & self-deletes script
 # ==========================================================
 def cleanup():
-    """Remove temporary SSH keys and securely delete this script."""
+    """Remove temporary SSH keys and (best-effort) delete this script."""
     print("==> Cleaning up temporary seed files...")
     ssh_dir = Path.home() / ".ssh"
 
+    # Optionally remove the temporary deploy key from ~/.ssh
     if REMOVE_SSH_KEY_ON_EXIT:
         for key_file in ["id_tabby_bootstrap", "id_tabby_bootstrap.pub"]:
             try:
@@ -89,13 +90,36 @@ def cleanup():
             except Exception as e:
                 print(f"    ⚠️  Could not remove {key_file}: {e}")
 
+    # Best-effort removal of the seed script itself
     try:
+        # Make sure the file is owner-writable so shred/unlink can work,
+        # even if it was uploaded as read-only from the local machine.
+        try:
+            SEED_PATH.chmod(0o700)
+        except Exception as e:
+            print(f"    ⚠️  Could not chmod seed.py before delete: {e}")
+
         if shutil.which("shred"):
-            subprocess.run(["shred", "-u", "-n", "3", str(SEED_PATH)], check=False)
-            print("    🔒 Securely shredded seed.py")
-        else:
-            SEED_PATH.unlink(missing_ok=True)
-            print("    🗑️  Deleted seed.py")
+            # Try secure delete; check exit code explicitly
+            result = subprocess.run(
+                ["shred", "-u", "-n", "3", str(SEED_PATH)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode == 0:
+                print("    🔒 Securely shredded seed.py")
+                return
+            else:
+                print(
+                    f"    ⚠️  shred failed (exit code {result.returncode}), "
+                    "falling back to plain delete..."
+                )
+
+        # Either shred is not available or it failed → plain delete
+        SEED_PATH.unlink(missing_ok=True)
+        print("    🗑️  Deleted seed.py (no secure shred)")
+
     except Exception as e:
         print(f"    ⚠️  Could not delete seed file: {e}")
 

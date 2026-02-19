@@ -10,9 +10,15 @@
 # The injected local file is intentionally untracked:
 secrets/seed.py
 
+# Local secrets (symlinks into /secrets)
+secrets/seed.env
+secrets/id_tabby_bootstrap
+secrets/id_tabby_bootstrap.pub
+
 # 🧠 Decrypted environment files (never commit)
 .env
 .env.*
+*.env
 *.key
 id_*
 

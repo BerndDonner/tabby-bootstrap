@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+IFS=$'\n\t'
 
 # ===============================================
 # 🚀 deploy-seed.sh
@@ -52,6 +53,15 @@ SSH_USER="${SSH_USER:-ubuntu}"
 REMOTE_PATH_DEFAULT="/tmp/seed.py"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_tabby_bootstrap}"  # change if you use another key
 
+# --- SSH options for ephemeral hosts (Lambda etc.) -----------------------------
+SSH_OPTS=(
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o LogLevel=ERROR
+  -o IdentitiesOnly=yes
+  -i "$SSH_KEY_PATH"
+)
+
 # Behaviour flags (local defaults; changed via CLI flags)
 DEBUG_MODE="0"          # 1 → run seed.py with DEBUG=1 on remote
 BOOTSTRAP_BRANCH=""     # non-empty → export TABBY_BOOTSTRAP_REF on remote
@@ -101,17 +111,6 @@ if [[ ! -f "$SOURCE_SEED_PATH" ]]; then
   exit 1
 fi
 
-# --- SSH agent setup ----------------------------------------------------------
-echo "🔐 Checking ssh-agent..."
-
-if ! ssh-add -l >/dev/null 2>&1; then
-  echo "→ Starting ssh-agent and adding key..."
-  eval "$(ssh-agent -s)" >/dev/null
-  ssh-add "$SSH_KEY_PATH"
-else
-  echo "✅ SSH key already loaded in agent."
-fi
-
 # --- Deploy -------------------------------------------------------------------
 echo "==> Deploying seed script to $REMOTE_IP"
 echo "    Local file:     $SOURCE_SEED_PATH"
@@ -121,7 +120,7 @@ echo "    Debug mode:     $DEBUG_MODE"
 echo "    Bootstrap ref:  ${BOOTSTRAP_BRANCH:-<seed default>}"
 echo
 
-scp -C "$SOURCE_SEED_PATH" "$SSH_USER@$REMOTE_IP:$REMOTE_PATH"
+scp -C "${SSH_OPTS[@]}" "$SOURCE_SEED_PATH" "$SSH_USER@$REMOTE_IP:$REMOTE_PATH"
 
 # Build remote exports:
 # - REMOTE_IP is always set (used by seed.py and follow-up scripts)
@@ -143,7 +142,7 @@ else
   echo "🚀 Running seed.py in AUTO mode..."
 fi
 
-ssh "$SSH_USER@$REMOTE_IP" \
+ssh "${SSH_OPTS[@]}" "$SSH_USER@$REMOTE_IP" \
   "$REMOTE_EXPORTS chmod +x '$REMOTE_PATH' && '$REMOTE_PATH'"
 
 echo "✅ Deployment complete."

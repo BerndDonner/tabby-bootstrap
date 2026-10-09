@@ -1,122 +1,79 @@
-# 🐈‍⬛ tabby-bootstrap
+# tabby-bootstrap — Ollama and Tabby on temporary Lambda GPU instances
 
-Helper scripts to **bootstrap, restore, and launch a self-hosted Tabby server**  
-(CodeLlama + Mistral) on remote GPU instances (Lambda, Hetzner, Scaleway, etc.).
+This repository bootstraps a **fresh GPU instance**. The GPU instance clones
+this repository from GitHub and runs `ollama_setup/run_all.py` or
+`tabby_setup/run_all.py`. There is no Lambda API dependency.
 
----
+## Normal Ollama workflow
 
-## ⚠️ BIG FAT WARNING – READ BEFORE CLONING
+1. In the Lambda web UI, select and start a GPU instance; note its public IP.
+2. On your NixOS machine, in this repository: `nix develop` (same as `nix develop .#ollama`).
+3. Run `./deploy-seed.sh <IP>`.
+4. **Terminate** the GPU instance in Lambda's web UI after class/exam.
 
-This repository uses a **Git clean filter** to automatically strip secrets  
-(API keys, JWT tokens, private SSH keys) before committing.
+`nix develop` requires `cloudflare.sops.env` in the pinned NixOS-Config.
+It decrypts `CF_API_TOKEN` and `CF_ZONE_ID` in memory. The local key at
+`~/.ssh/id_tabby_bootstrap` is already linked from the LUKS vault by Home
+Manager; it is used for SSH to the GPU instance and is forwarded temporarily
+so that the GPU instance can clone the private GitHub repository.
 
-You **must enable the filter once per clone** before working with this repo:
+The deploy command takes **only** the IP address. It obtains the target from
+`BOOTSTRAP_TARGET` set by the DevShell; it never takes a target argument.
 
-```bash
-git config include.path .gitconfig.strip-secrets
-```
+## Testing a feature branch
 
-Without this include, commits will **not** be sanitized and you may leak secrets.
-
-The filter logic lives in:
-```
-.utils/strip-secrets.sh
-.utils/inject-secrets.sh
-.gitconfig.strip-secrets
-```
-
----
-
-## 🚀 Overview
-
-| Folder | Purpose |
-|---------|----------|
-| `setup/` | start Tabby on the target server |
-| `restore/` | restore model data from Hetzner S3 |
-| `backup/` | backup trained models to S3 |
-| `utils/` | helper scripts for secret management |
-| `secrets/` | local-only secrets (never committed) |
-
----
-
-## 🧩 Workflow Summary
-
-1. **seed.sh** is a first-stage bootstrap script that:
-   - installs SSH keys and Git config
-   - clones this repo to the target server
-   - restores model data from Hetzner
-   - launches Tabby
-
-2. **strip-secrets.sh** removes real secrets before commit  
-   (run automatically by Git).
-
-3. **inject-secrets.sh** re-inserts them locally for deployment.
-
-4. **deploy-seed.sh** uploads and runs the seed script on the remote instance.
-
----
-
-## 📦 Typical Usage
+On your workstation, switch to the feature branch and **push** it before
+running the deploy command (the fresh GPU always clones from GitHub):
 
 ```bash
-# 1️⃣ Clone the repository
-git clone git@github.com:BerndDonner/tabby-bootstrap.git
-cd tabby-bootstrap
-
-# 2️⃣ Enable the clean filter (must be done once per clone!)
-git config include.path .gitconfig.strip-secrets
-
-# 3️⃣ Inject your local secrets for testing or deployment
-./utils/inject-secrets.sh secrets/seed.sh secrets/seed.env secrets/id_tabby_bootstrap > seed_local.sh
-
-# 4️⃣ Deploy seed.sh to your GPU instance
-./deploy-seed.sh <REMOTE_IP> secrets/seed.sh
+git switch feature/sops-target-shells
+git push -u origin feature/sops-target-shells
+nix develop
+./deploy-seed.sh <IP> --branch feature/sops-target-shells --debug
+./deploy-seed.sh <IP> --branch feature/sops-target-shells
 ```
 
----
+The default ref is the currently checked-out **local branch**, not
+implicitly `master`; `--branch <ref>` overrides it. You can use `--debug`
+to verify the remote Git clone without launching Ollama.
+The local `seed.py` is uploaded from your working copy; the target setup is
+executed from the GitHub ref, so commit and push setup changes first.
 
-## 🧠 Key Concepts
+## Tabby: parked, not deleted
 
-- **Seed script (`seed.sh`)**  
-  First-stage bootstrapper, executed remotely.  
-  Automatically clones this repo and runs the local setup chain.
+`nix develop .#tabby` selects the Tabby target but does **not** require fake
+or expired AWS/Hetzner secrets. For now, only a clone-only `--debug` deploy
+is permitted. A normal Tabby deploy fails fast until its old restore path is
+reworked and new real credentials are available. All Tabby setup/backup/restore
+scripts remain in the repository.
 
-- **S3 Integration**  
-  Backup and restore handled via `restore/restore_tabby_from_hetzner.sh`.
+## Secret migration prerequisite (NixOS-Config)
 
-- **Server Startup**  
-  Managed through `setup/start_tabby.sh`.
+In your *NixOS-Config* working tree, create
+`secrets/cloudflare.sops.env`, containing:
 
----
+```dotenv
+CF_API_TOKEN=<your real Cloudflare API token>
+CF_ZONE_ID=<your real Cloudflare zone ID>
+```
 
-## 🔐 Secret Management Summary
-
-| Component | Purpose | Stored in Git? |
-|------------|----------|----------------|
-| `seed.sh` | Logic only (no secrets) | ✅ |
-| `secrets/seed.env` | AWS + JWT secrets | ❌ |
-| `secrets/id_tabby_bootstrap` | SSH private key | ❌ |
-| `utils/strip-secrets.sh` | Removes secrets | ✅ |
-| `utils/inject-secrets.sh` | Re-inserts secrets | ✅ |
-| `.gitconfig.strip-secrets` | Defines Git filter | ✅ |
-
----
-
-## ✅ Safety Checks Before Commit
-
-To verify that `seed.sh` is sanitized before pushing:
+Encrypt with the existing `.sops.yaml` recipients; **never** commit the
+plaintext values. Commit and push the encrypted file. Then update the
+`nixos-config` input of this flake and commit the generated `flake.lock`:
 
 ```bash
-git show :secrets/seed.sh | less
-# or
-git diff --cached -- secrets/seed.sh
+nix flake lock
 ```
 
-You should only see `<REDACTED>` placeholders and the line  
-`# 🔒 <PRIVATE SSH KEY REDACTED>` — never real credentials.
+The private SSH key stays in the existing LUKS vault, not duplicated in SOPS.
+The SSH public key is not a secret.
 
----
+## Scope
 
-## 🧾 License
+The DevShell selects the target and its secret sets, while `deploy-seed.sh`
+is target-agnostic. `bootstrap_payload.py` validates and selects which
+variables are sent over SSH stdin; `seed.py` receives that JSON, installs the
+GitHub deploy key, clones the repo, and dispatches to the requested setup.
+No decrypted secrets are added to the Nix store or written into seed.py.
 
-MIT © 2025 Bernd Donner
+**TODO:** independent cost watchdog on `cloud` (not part of this change).

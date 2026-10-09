@@ -1,13 +1,4 @@
 # ---------------------------------------------
-# 🔐 Secrets and binary safety
-# ---------------------------------------------
-
-# Never show diffs or attempt merges for private keys/certs
-*.pem binary
-*.key binary
-id_* binary
-
-# ---------------------------------------------
 # 🧩 Text normalization
 # ---------------------------------------------
 *.sh text eol=lf
@@ -15,11 +6,3 @@ id_* binary
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
-
-# ---------------------------------------------
-# 🚫 Exclude internal files from git archive (ZIP)
-# ---------------------------------------------
-.gitignore export-ignore
-.gitattributes export-ignore
-.gitconfig export-ignore
-secrets/* export-ignore

@@ -1,55 +1,21 @@
-# ---------------------------------------------
-# 🧩 Bootstrap repository: Ignore local + secret files
-# ---------------------------------------------
-
-# ---------------------------------------------------------------------
-# Generated local seed (never commit)
-# ---------------------------------------------------------------------
-# The redacted template is tracked:
-#   secrets/seed_stripped.py
-# The injected local file is intentionally untracked:
-secrets/seed.py
-
-# Local secrets (symlinks into /secrets)
-secrets/seed.env
-secrets/id_tabby_bootstrap
-secrets/id_tabby_bootstrap.pub
-
-# 🧠 Decrypted environment files (never commit)
+# Local credentials
 .env
 .env.*
 *.env
 *.key
 id_*
 
-# ✅ Only encrypted files may be tracked
-!secrets/*.enc
+# Python
+__pycache__/
+*.pyc
+.venv/
 
-# 🔐 SSH agent sockets or temporary decrypted data
-/tmp/*
-*.tmp
-*.bak
+# Editors
+.vscode/
+.idea/
 *.swp
 
-# ---------------------------------------------
-# 🧰 System / editor noise
-# ---------------------------------------------
+# System / logs
 *.log
 .DS_Store
 Thumbs.db
-
-# VS Code
-.vscode/
-*.code-workspace
-
-# JetBrains / PyCharm
-.idea/
-
-# Python cache
-__pycache__/
-*.pyc
-
-# Shell history or local config
-.bash_history
-.gitconfig.local
-

@@ -1,10 +1,11 @@
 # tabby-bootstrap – Architektur, Betrieb und Entwicklungsentscheidungen
 
 **Stand: 11.10.2026 · Quelle: hochgeladenes `tabby-bootstrap02(1).zip` und
-anschließender vereinbarter Umbau.** Dieses Dokument beschreibt **den neu
-implementierten Snapshot-/DAG-Ansatz**. Der am 09.10. auf Lambda erfolgreich
-getestete Stand verwendete dagegen noch einen Remote-Git-Clone. **Ein Live-Test
-dieses Umbaus steht aus**; das ist keine produktiv verifizierte Freigabe.
+anschließender vereinbarter Umbau.** Dieses Dokument beschreibt den
+Snapshot-/DAG-Ansatz. Der neue Normalmodus wurde am 11.10. auf Lambda
+erfolgreich mit **41 s gesamter Deployment-Zeit** getestet. Die nachträgliche
+Umstellung der Modell-Fortschrittsanzeige auf die Ollama-JSON-API hat bislang
+nur Offline-Tests durchlaufen; sie benötigt noch einen separaten Live-Test.
 
 > **An künftige Assistenten/Entwickler:** Nutzerinvarianten nicht ohne explizite
 > Rücksprache ändern. Die GitHub-Clone-, Branch-Override- und Remote-Key-Logik
@@ -171,15 +172,19 @@ Subprozessen, Ausgabe erhält ein `[task-id]`-Präfix. Unabhängige Tasks starte
 früh; bei einem Fehler werden abhängige Tasks nicht gestartet, laufende
 Prozessgruppen erhalten ein SIGTERM, und `seed.py` meldet einen Fehlerstatus.
 Eine automatische Wiederholung, ein externes Prozess-Framework und Provider-
-APIs sind **nicht implementiert**. Parallelität der beiden `ollama pull` kann
+APIs sind **nicht implementiert**. Parallelität der beiden Ollama-Modell-Downloads kann
 sich gegenseitig beeinflussen und muss live gemessen werden; bei Bedarf eine
 explizite Ressourcensperre oder Kante einführen, **nicht** blind serialisieren.
 
 **Logging:** Jeder Task hat genau einen gekapselten stdout/stderr-Stream. Der
 Runner liest dessen Bytes inkrementell (UTF-8), entfernt Terminal-Steuerzeichen
 und unterscheidet normale `\n`-Zeilen von `\r`-Fortschrittsständen (z. B.
-`ollama pull` und `curl`). Normale Zeilen werden sofort mit `[task-id]` geloggt;
+`curl`). Normale Zeilen werden sofort mit `[task-id]` geloggt;
 `\r`-Updates höchstens etwa alle 2 s, der abschließende Stand zusätzlich.
+**Modell-Downloads** verwenden dagegen Ollamas lokale NDJSON-API `POST /api/pull`
+(ohne weitere Python-Abhängigkeiten) und geben nur Phasenwechsel, etwa
+alle zwei Sekunden einen aktuellen Fortschritt und Abschluss aus.
+API-Fehler oder ein vorzeitiges Ende ohne `success` lassen den Task fehlschlagen.
 Das Logging bleibt durch denselben Lock wie bisher serialisiert; bekannte
 Secret-Werte werden vor dem Schreiben ersetzt. Jeder Task meldet seine
 Wall-Clock-Dauer via `time.monotonic()`; `[bootstrap] TOTAL` folgt erst nach
@@ -272,7 +277,10 @@ Der vorherige SOPS-/Remote-Clone-Bootstrap lief am **09.10.2026** auf Lambda.
 Am **11.10.2026** wurde auch der neue Snapshot-/DAG-Pfad auf Lambda erfolgreich
 geprüft: `--debug` mit anschließendem manuellem `task_runner.py --all`,
 parallelem DNS/Installer-Start, parallelen Modelldownloads und VS Code Continue.
-Ein separater Test von `./deploy-seed.sh <IP>` **ohne `--debug`** steht noch aus.
+`./deploy-seed.sh <IP>` **ohne `--debug`** wurde anschließend erfolgreich
+ausgeführt: **41 s Gesamtdauer**, davon **35,1 s Remote-DAG**.
+DNS: 0,5 s; Ollama-Installation: 9,5 s; Konfiguration: 2,8 s;
+Chat-Modell: 13,9 s; Autocomplete-Modell: 22,6 s. Alle sieben Tasks erfolgreich.
 Offline-Prüfung:
 
 ```bash
@@ -280,12 +288,12 @@ python3 -m unittest discover -s tests -v
 bash -n deploy-seed.sh
 ```
 
-Beim nächsten Live-Test den **Normalmodus** inklusive Laufzeit-Ausgaben,
-DNS, GPU-Prozess, Ollama-API und echten Continue-Anfragen prüfen. Time-to-Ready
-hat Vorrang vor kosmetischer Serialisierung. Bei Änderungen immer Code, Tests,
-README und diese Datei zusammen aktualisieren.
+Beim nächsten Live-Test die **strukturierte JSON-API-Modellausgabe** und
+weiterhin DNS, GPU-Prozess, Ollama-API und echte Continue-Anfragen prüfen.
+Time-to-Ready hat Vorrang vor kosmetischer Serialisierung. Bei Änderungen
+immer Code, Tests, README und diese Datei zusammen aktualisieren.
 
-**Offene Aufgaben:** Normalmodus-Lambda-Test, Benchmark mit etwa zehn
+**Offene Aufgaben:** JSON-Pull-Logging auf Lambda prüfen, Benchmark mit etwa zehn
 Continue-Clients, robuste sichere Ollama-Port-Freigabe inkl. Distanzunterricht,
 evtl. GPU-Container-Runtimes und dynamische Ports, Tabby-Reaktivierung (nur auf
 Auftrag), unabhängiger Kosten-Watchdog auf `cloud`.

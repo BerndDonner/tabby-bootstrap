@@ -1,5 +1,6 @@
 """Shared, non-secret helpers for independently executable Ollama setup tasks."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -82,12 +83,65 @@ def wait_for_ollama(timeout=90):
 
 
 def pull_model(model):
+    """Pull through Ollama's newline-delimited JSON API, not its animated CLI.
+
+    The CLI redraws multiple terminal lines and produces hundreds of duplicate
+    messages when two downloads run under our line-oriented scheduler logger.
+    Ollama's API exposes the same underlying download as structured updates.
+    """
     found = run(["ollama", "list"], capture=True).splitlines()
     if any(line.split() and line.split()[0] == model for line in found[1:]):
         log(f"Already installed: {model}")
         return
+
     log(f"Pulling {model} ...")
-    run(["ollama", "pull", model])
+    body = json.dumps({"model": model, "stream": True}).encode("utf-8")
+    request = urllib.request.Request(
+        "http://127.0.0.1:11434/api/pull",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    current_phase = None
+    last_percent = None
+    last_report = 0.0
+    successful = False
+    with urllib.request.urlopen(request, timeout=180) as response:
+        for line in response:
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("error"):
+                raise RuntimeError(f"Ollama pull failed for {model}: {event['error']}")
+            phase = event.get("status")
+            if phase == "success":
+                successful = True
+                break
+            if not phase:
+                continue
+
+            now = time.monotonic()
+            if phase != current_phase:
+                current_phase = phase
+                last_percent = None
+                last_report = 0.0
+
+            total = event.get("total")
+            completed = event.get("completed")
+            if isinstance(total, (int, float)) and total > 0 and isinstance(completed, (int, float)):
+                percent = min(100, max(0, int(100 * completed / total)))
+                # Always report first/last progress, but sample intermediate updates.
+                if (last_percent is None or now - last_report >= 2.0
+                        or percent == 100 and last_percent != 100):
+                    log(f"{phase}: {percent}% ({completed / 1e9:.2f}/{total / 1e9:.2f} GB)")
+                    last_percent = percent
+                    last_report = now
+            elif last_percent is None:
+                log(phase)
+                last_percent = -1  # Suppress repeated spinner/status updates.
+
+    if not successful:
+        raise RuntimeError(f"Ollama pull ended without success: {model}")
     log(f"Pulled {model}")
 
 

@@ -6,11 +6,12 @@ Dort installiert ein kleiner **Python-DAG-Scheduler** Ollama und die benötigten
 Modelle; unabhängige Tasks wie das **Cloudflare-DNS-Update starten parallel**.
 Das Repository wird **nicht auf der GPU von GitHub geklont**.
 
-**Stand: 11.10.2026.** Der neue Snapshot-/DAG-Pfad wurde auf einer echten
-Lambda-GPU mit `--debug`, anschließend `task_runner.py --all`, DNS-Update,
-beiden Modellen und VS Code Continue erfolgreich getestet. Der **Normalmodus**
-wird noch separat getestet. Tabby bleibt als historischer, momentan nicht
-produktionsfähiger Pfad erhalten.
+**Stand: 11.10.2026.** Der Snapshot-/DAG-Pfad wurde auf einer echten Lambda-GPU
+im Debug-Modus und im vollständigen Normalmodus erfolgreich getestet; letzterer
+benötigte **41 s insgesamt** (35,1 s Remote-DAG, beide Modelle installiert).
+Die neue **JSON-API-Fortschrittsausgabe** wurde offline getestet, aber noch nicht
+auf einer GPU. Tabby bleibt als historischer, momentan nicht produktionsfähiger
+Pfad erhalten.
 
 ## Normaler Ablauf
 
@@ -84,9 +85,11 @@ speichern sie nicht auf der GPU-Festplatte; die Übergabe erfolgt über SSH-stdi
 und Prozessumgebungen. DNS-TTL **60 s**, Cloudflare-Proxy **aus**.
 
 **Fortschritt und Laufzeiten:** Jede Ausgabe der Tasks erhält ein
-`[task-id]`-Präfix. Normale Logzeilen erscheinen sofort. Die mit `\r`
-überschriebenen Fortschrittsanzeigen von `curl`/`ollama pull` werden etwa alle
-**2 Sekunden** protokolliert; der letzte Fortschrittsstand geht nicht verloren.
+`[task-id]`-Präfix. Normale Logzeilen erscheinen sofort. `curl`-Fortschritt wird
+bei `\r`-Updates gedrosselt. Die beiden Modell-Tasks nutzen **Ollamas
+streamende JSON-API** (`POST /api/pull`) statt der animierten CLI-Ausgabe;
+Fortschritt erscheint höchstens etwa alle **2 Sekunden** pro Downloadphase,
+zuzüglich Phasenwechsel und Abschluss. Das vermeidet doppelte Terminalzeilen.
 Jeder Task meldet `OK (12.3s)` bzw. `FAILED (exit 1, 12.3s)`. Nach dem gesamten
 Graphen erscheint `[bootstrap] TOTAL ...` (nur **Remote-DAG**); die abschließende
 `Total deployment time`-Zeile von `deploy-seed.sh` misst zusätzlich lokalen

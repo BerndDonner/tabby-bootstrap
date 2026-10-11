@@ -1,55 +1,9 @@
 #!/usr/bin/env python3
-# =====================================================================
-# 🌐  10_update_dns.py — Update Cloudflare DNS for AI Endpoint
-# =====================================================================
-# PURPOSE:
-#   Update the Cloudflare A record for the public AI endpoint
-#   (e.g. ai.donner-lab.org) to point to the current GPU instance.
-#
-# CONTEXT / PIPELINE:
-#   This script is intended to be run AFTER:
-#
-#     1. deploy-seed.sh (local machine)
-#        - Copies secrets/seed.py to the remote instance.
-#        - Starts seed.py with:
-#            export REMOTE_IP='<public IP>';
-#            python3 /tmp/seed.py
-#
-#     2. seed.py (remote instance)
-#        - Installs SSH key + clones tabby-bootstrap.
-#        - Exports Cloudflare-related env vars:
-#            CF_API_TOKEN, CF_ZONE_ID, CF_DNS_NAME
-#
-#     3. ollama_setup/run_all.py (remote instance)
-#        - Discovers and runs numbered setup scripts:
-#            10_update_dns.py   ← THIS SCRIPT
-#            20_setup_ollama.py
-#
-# ACTIONS:
-#   1. Read environment variables:
-#        - CF_API_TOKEN   (Cloudflare API token with DNS:Edit)
-#        - CF_ZONE_ID     (Zone ID for donner-lab.org)
-#        - CF_DNS_NAME    (FQDN to update, e.g. ai.donner-lab.org)
-#        - REMOTE_IP      (public IPv4 of this instance, from deploy-seed.sh)
-#   2. Validate configuration and abort with clear messages if missing.
-#   3. Call Cloudflare API to:
-#        - Look up an existing A record for CF_DNS_NAME
-#        - Update it if present, or create it if missing
-#   4. Print a short summary of the final DNS state.
-#
-# CAN BE RUN:
-#   - Standalone:
-#       python3 ollama_setup/20_update_dns.py
-#   - From code:
-#       from ollama_setup import 20_update_dns; 20_update_dns.main()
-#
-# NOTES:
-#   - This script does NOT try to guess the public IP. It relies on
-#     REMOTE_IP, which is passed in from deploy-seed.sh:
-#       ssh ... "export REMOTE_IP='<IP>'; ... seed.py"
-#   - TTL is fixed to 60 seconds to allow fast switching between
-#     different GPU instances in the classroom.
-# =====================================================================
+"""Update Cloudflare A record early in parallel with installing Ollama.
+
+Receives only CF_API_TOKEN and CF_ZONE_ID, plus REMOTE_IP and CF_DNS_NAME,
+from the task executor. TTL is 60 seconds; proxied is false.
+"""
 
 import json
 import os

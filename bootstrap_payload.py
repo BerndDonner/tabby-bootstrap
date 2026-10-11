@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Build the in-memory JSON payload for the remote, target-agnostic seed.py.
-
-The JSON is written to stdout *only* so it can be piped directly into SSH.
-Never print it in a terminal, log it, or store it in a file.
-"""
+"""Validate a bootstrap deployment and write its secret JSON only to SSH stdin."""
 
 import argparse
 import ipaddress
@@ -12,65 +8,57 @@ import os
 import sys
 from pathlib import Path
 
+from task_runner import load_manifest
 
-TARGET_VARIABLES = {
-    "ollama": ("CF_API_TOKEN", "CF_ZONE_ID"),
-    "tabby": (),  # Historical S3/JWT secrets no longer valid; not configured.
-}
+TARGETS = {"ollama", "tabby"}
 
 
-def create_payload(target, remote_ip, ref, debug, key_path, environ=None):
+def create_payload(target, remote_ip, debug, commit, branch, environ=None, repo=None):
     env = os.environ if environ is None else environ
-    if target not in TARGET_VARIABLES:
-        raise ValueError(f"Unknown BOOTSTRAP_TARGET: {target!r}")
-
+    root = Path(__file__).resolve().parent if repo is None else Path(repo)
+    if target not in TARGETS:
+        raise ValueError(f"Unsupported target: {target!r}")
     try:
         ipaddress.ip_address(remote_ip)
     except ValueError as exc:
         raise ValueError("REMOTE_IP must be an IP address") from exc
-
+    if not isinstance(commit, str) or len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
+        raise ValueError("Invalid Git commit SHA")
+    if not isinstance(branch, str) or not branch:
+        raise ValueError("Missing local branch metadata")
     if target == "tabby" and not debug:
-        raise ValueError(
-            "Tabby is not configured yet (old AWS/Hetzner credentials expired). "
-            "For a safe clone-only test, run with --debug."
-        )
+        raise ValueError("Tabby production setup is not configured. Use --debug only.")
 
-    required = TARGET_VARIABLES[target]
+    # Tabby has no live credentials or supported DAG yet; safe debug-only snapshot.
+    tasks = load_manifest(root / "ollama_setup" / "tasks.json", root) if target == "ollama" else {}
+    required = sorted({secret for task in tasks.values() for secret in task["secrets"]})
     missing = [name for name in required if not env.get(name) or env[name] == "<REDACTED>"]
     if missing:
-        raise ValueError("Missing required Ollama secrets: " + ", ".join(missing) +
-                         ". Enter 'nix develop' after migrating cloudflare.sops.env.")
+        raise ValueError("Missing required secrets: " + ", ".join(missing) + ". Enter the target devShell.")
 
-    private_key = Path(key_path).expanduser().read_text(encoding="utf-8")
-    if not private_key.startswith("-----BEGIN OPENSSH PRIVATE KEY-----") and \
-       not private_key.startswith("-----BEGIN RSA PRIVATE KEY-----"):
-        raise ValueError("GitHub deploy key does not look like a private SSH key")
-
-    return {
-        "target": target,
-        "remote_ip": remote_ip,
-        "ref": ref,
-        "debug": debug,
-        "env": {name: env[name] for name in required},
-        "git_ssh_key": private_key,
-    }
+    return {"target": target, "remote_ip": remote_ip, "commit": commit,
+            "branch": branch, "debug": bool(debug),
+            "env": {name: env[name] for name in required}}
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", required=True, choices=tuple(TARGET_VARIABLES))
+    parser.add_argument("--target", choices=sorted(TARGETS), required=True)
     parser.add_argument("--remote-ip", required=True)
-    parser.add_argument("--ref", required=True)
-    parser.add_argument("--key-path", required=True)
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--branch", required=True)
     parser.add_argument("--debug", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--validate-only", action="store_true")
+    args = parser.parse_args(argv)
     try:
-        payload = create_payload(args.target, args.remote_ip, args.ref, args.debug, args.key_path)
+        payload = create_payload(args.target, args.remote_ip, args.debug,
+                                 args.commit, args.branch)
     except (OSError, ValueError) as exc:
         print(f"Bootstrap preflight error: {exc}", file=sys.stderr)
         return 1
-    json.dump(payload, sys.stdout, ensure_ascii=True)
-    sys.stdout.write("\n")
+    if not args.validate_only:
+        json.dump(payload, sys.stdout, ensure_ascii=True)
+        sys.stdout.write("\n")
     return 0
 
 

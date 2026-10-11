@@ -1,118 +1,75 @@
 #!/usr/bin/env python3
-"""Remote first-stage bootstrap for temporary Lambda GPU instances.
+"""Remote entrypoint for a *locally archived*, checksum-verified code snapshot.
 
-A small, non-secret Python script copied via SCP. It receives all secrets as
-one JSON document on SSH stdin. It installs the temporary GitHub SSH key,
-clones tabby-bootstrap, and runs the chosen target's setup sequence.
+The SSH stdin JSON carries secrets only; no GitHub login or remote Git clone.
+Normal mode keeps secrets in memory. Debug mode saves a protected context for
+manual task execution and leaves all application tasks untouched.
 """
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
+import sys
+
+import task_runner
 
 
-REPO_URL = "git@github.com:BerndDonner/tabby-bootstrap.git"
-TARGET_RUNNERS = {
-    "ollama": "ollama_setup",
-    "tabby": "tabby_setup",
-}
+def write_debug_context(payload, path=task_runner.DEBUG_CONTEXT):
+    path = Path(path)
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    path.parent.chmod(0o700)
+    # Atomic replacement; never expose an existing world-readable file.
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=".debug-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream)
+            stream.write("\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
-def setup_ssh(private_key):
-    ssh_dir = Path.home() / ".ssh"
-    ssh_dir.mkdir(mode=0o700, exist_ok=True)
-    ssh_dir.chmod(0o700)
-    private_path = ssh_dir / "id_tabby_bootstrap"
-    # Exclusive creation with 0600; replacing an existing private key is fine
-    # on the disposable VM, but permissions must be restrictive from the start.
-    fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(private_key.rstrip("\n") + "\n")
-    private_path.chmod(0o600)
-
-    # Keep the original bootstrap's GitHub configuration. The VM is freshly
-    # created, so it is safe to dedicate ~/.ssh/config to this purpose.
-    config_path = ssh_dir / "config"
-    config_path.write_text(
-        "Host github.com\n"
-        "    HostName github.com\n"
-        "    User git\n"
-        "    IdentityFile ~/.ssh/id_tabby_bootstrap\n"
-        "    IdentitiesOnly yes\n"
-        "    StrictHostKeyChecking accept-new\n",
-        encoding="utf-8",
-    )
-    config_path.chmod(0o600)
-    # Keep the original host-key acquisition behavior for now.
-    known_hosts = ssh_dir / "known_hosts"
-    if not known_hosts.exists() or "github.com" not in known_hosts.read_text(encoding="utf-8"):
-        with known_hosts.open("a", encoding="utf-8") as f:
-            subprocess.run(["ssh-keyscan", "-t", "ed25519", "github.com"],
-                           stdout=f, check=True)
-
-
-def clone_repo(ref):
-    target_dir = Path.home() / "tabby-bootstrap"
-    if not target_dir.is_dir():
-        subprocess.run(["git", "clone", REPO_URL, str(target_dir)], check=True)
-    subprocess.run(["git", "-C", str(target_dir), "fetch", "origin", "--prune", "--tags"], check=True)
-    # A remote feature branch is selected deterministically, including on
-    # subsequent runs. Tags or commit SHA values run in detached HEAD.
-    remote_ref = f"refs/remotes/origin/{ref}"
-    is_remote_branch = subprocess.run(
-        ["git", "-C", str(target_dir), "show-ref", "--verify", "--quiet", remote_ref],
-        check=False,
-    ).returncode == 0
-    if is_remote_branch:
-        subprocess.run(["git", "-C", str(target_dir), "checkout", "-B", ref,
-                        f"origin/{ref}"], check=True)
-    else:
-        subprocess.run(["git", "-C", str(target_dir), "checkout", "--detach", ref], check=True)
-    print(f"Repository ready: {target_dir} at {ref}", flush=True)
-
-
-def run_setup(target):
-    setup_path = Path.home() / "tabby-bootstrap" / TARGET_RUNNERS[target] / "run_all.py"
-    if not setup_path.is_file():
-        raise FileNotFoundError(setup_path)
-    print(f"Running {target} setup ...", flush=True)
-    subprocess.run(["python3", str(setup_path)], cwd=setup_path.parent, check=True)
-
-
-def main():
-    payload = json.load(sys.stdin)
+def main(stdin=None, root=None):
+    stream = sys.stdin if stdin is None else stdin
+    root = Path(__file__).resolve().parent if root is None else Path(root)
+    payload = json.load(stream)
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be an object")
     target = payload.get("target")
-    if target not in TARGET_RUNNERS:
-        raise ValueError(f"Unsupported target: {target!r}")
-    env = payload.get("env", {})
-    if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str)
-                                             for k, v in env.items()):
-        raise ValueError("Invalid environment data")
-    for name in env:
-        if not name.isidentifier():
-            raise ValueError(f"Invalid environment variable: {name!r}")
-
-    ref = payload.get("ref", "master")
-    os.environ.update(env)
-    os.environ["REMOTE_IP"] = payload["remote_ip"]
-    os.environ["CF_DNS_NAME"] = "ai.donner-lab.org"
-
-    print(f"GPU bootstrap: {target} / ref {ref}", flush=True)
-    setup_ssh(payload["git_ssh_key"])
-    clone_repo(ref)
-
-    if payload.get("debug", False):
-        print("Debug mode: cloned repository, skipping setup.", flush=True)
-    else:
-        run_setup(target)
-    print(f"Bootstrap finished: {target}", flush=True)
+    if target not in ("ollama", "tabby"):
+        raise ValueError("Unsupported target")
+    env = payload.get("env")
+    if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+        raise ValueError("Invalid secret payload")
+    remote_ip = payload.get("remote_ip")
+    import ipaddress
+    ipaddress.ip_address(remote_ip)
+    context = {key: payload[key] for key in ("target", "remote_ip", "commit", "branch", "env", "debug")}
+    print(f"GPU bootstrap: {target}, local commit {context['commit']} ({context['branch']})", flush=True)
+    if context["debug"]:
+        write_debug_context(context)
+        print("Debug ready. No DNS, installation or model downloads started.", flush=True)
+        print("SSH login → cd ~/tabby-bootstrap → python3 task_runner.py --list", flush=True)
+        return 0
+    # An earlier debug deployment on the same VM must not leave credentials on disk.
+    task_runner.DEBUG_CONTEXT.unlink(missing_ok=True)
+    if target != "ollama":
+        raise ValueError("Tabby production setup is disabled. Use --debug.")
+    success = task_runner.execute(target, env, context, root)
+    if not success:
+        raise RuntimeError("One or more bootstrap tasks failed")
+    # Snapshot archive is useful in debug only; normal deployment can discard it.
+    (Path.home() / "tabby-bootstrap-source.tar").unlink(missing_ok=True)
+    print(f"Bootstrap ready: {target}", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        main()
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        sys.exit(main())
+    except (OSError, ValueError, KeyError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"Bootstrap failed: {exc}", file=sys.stderr)
         sys.exit(1)

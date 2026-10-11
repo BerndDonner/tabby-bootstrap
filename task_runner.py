@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""Small stdlib DAG executor; separate subprocess + least-privilege env per task.
+
+Automatic deployment calls execute() from seed.py with in-memory credentials.
+In --debug, this CLI reads the protected debug context to run one task (without
+its dependencies) or the complete graph (--all). It never prints credentials.
+"""
+
+import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import threading
+
+ROOT = Path(__file__).resolve().parent
+DEBUG_CONTEXT = Path.home() / ".config" / "tabby-bootstrap" / "debug.json"
+KNOWN_SECRET_NAMES = {"CF_API_TOKEN", "CF_ZONE_ID"}
+ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+ENV_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def load_manifest(path, root=ROOT):
+    """Validate a static, acyclic task graph before launching any task."""
+    root = Path(root).resolve()
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or raw.get("version") != 1 or not isinstance(raw.get("tasks"), dict):
+        raise ValueError("Manifest requires version=1 and a tasks object")
+    tasks = raw["tasks"]
+    if not tasks:
+        raise ValueError("Task graph is empty")
+    for name, task in tasks.items():
+        if not isinstance(name, str) or not ID_PATTERN.fullmatch(name):
+            raise ValueError(f"Invalid task ID: {name!r}")
+        if not isinstance(task, dict) or set(task) != {"script", "after", "secrets"}:
+            raise ValueError(f"Task {name}: requires exactly script, after, secrets")
+        script = task["script"]
+        if not isinstance(script, str) or not script.endswith(".py") or Path(script).is_absolute():
+            raise ValueError(f"Task {name}: invalid script path")
+        resolved = (root / script).resolve()
+        if not resolved.is_relative_to(root) or not resolved.is_file():
+            raise ValueError(f"Task {name}: script missing or outside snapshot: {script}")
+        for field in ("after", "secrets"):
+            values = task[field]
+            if not isinstance(values, list) or not all(isinstance(v, str) for v in values) or len(values) != len(set(values)):
+                raise ValueError(f"Task {name}: invalid {field}")
+        if any(not ENV_PATTERN.fullmatch(s) for s in task["secrets"]):
+            raise ValueError(f"Task {name}: invalid secret variable name")
+    visited = set()
+    visiting = set()
+
+    def visit(name):
+        if name in visiting:
+            raise ValueError(f"Dependency cycle at {name}")
+        if name in visited:
+            return
+        visiting.add(name)
+        for dep in tasks[name]["after"]:
+            if dep not in tasks:
+                raise ValueError(f"Task {name} references unknown dependency {dep}")
+            visit(dep)
+        visiting.remove(name)
+        visited.add(name)
+
+    for name in tasks:
+        visit(name)
+    return tasks
+
+
+class TaskExecutor:
+    def __init__(self, tasks, secrets, context, root=ROOT, max_workers=4):
+        self.tasks = tasks
+        self.root = Path(root).resolve()
+        if not isinstance(secrets, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in secrets.items()):
+            raise ValueError("Invalid secrets")
+        self.secrets = secrets
+        self.context = context
+        self.max_workers = max_workers
+        self.lock = threading.Lock()
+        self.cancel = threading.Event()
+        self.active = {}
+        self.secret_names = KNOWN_SECRET_NAMES | set(secrets) | {
+            s for task in tasks.values() for s in task["secrets"]
+        }
+        missing = {s for task in tasks.values() for s in task["secrets"] if not secrets.get(s)}
+        if missing:
+            raise ValueError("Missing required secrets: " + ", ".join(sorted(missing)))
+
+    def log(self, task, message):
+        # Third-party commands may accidentally echo their environment.
+        for value in self.secrets.values():
+            if value:
+                message = message.replace(value, "[REDACTED]")
+        with self.lock:
+            print(f"[{task}] {message}", flush=True)
+
+    def stop_running(self):
+        # Stop process groups (including child shell/installer processes), not
+        # only the parent Python wrappers. Workers collect their exit statuses.
+        self.cancel.set()
+        with self.lock:
+            procs = list(self.active.values())
+        for proc in procs:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+        # Some installer subprocesses may ignore SIGTERM. Do not hang forever
+        # on a billed GPU while waiting for worker processes to exit.
+        for proc in procs:
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def run_one(self, name):
+        task = self.tasks[name]
+        if self.cancel.is_set():
+            return False
+        # Inherit ordinary runtime env only; never blanket-forward CF secrets.
+        env = {k: v for k, v in os.environ.items() if k not in self.secret_names}
+        env.update({"REMOTE_IP": self.context["remote_ip"],
+                    "CF_DNS_NAME": "ai.donner-lab.org", "PYTHONUNBUFFERED": "1"})
+        env.update({s: self.secrets[s] for s in task["secrets"]})
+        command = [sys.executable, "-u", str(self.root / task["script"])]
+        with self.lock:
+            if self.cancel.is_set():
+                return False
+            proc = subprocess.Popen(command, cwd=self.root, env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace", bufsize=1,
+                                    start_new_session=True)
+            self.active[name] = proc
+        self.log(name, "START")
+        try:
+            with proc.stdout:
+                for line in proc.stdout:
+                    self.log(name, line.rstrip("\r\n"))
+            status = proc.wait()
+        finally:
+            with self.lock:
+                self.active.pop(name, None)
+        self.log(name, "OK" if status == 0 else f"FAILED (exit {status})")
+        return status == 0
+
+    def execute(self, selected=None):
+        if selected is not None:
+            return self.run_one(selected)
+        pending = set(self.tasks)
+        completed = set()
+        running = {}
+        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+            try:
+                while pending or running:
+                    ready = sorted(n for n in pending if set(self.tasks[n]["after"]) <= completed)
+                    for name in ready:
+                        if len(running) >= self.max_workers:
+                            break
+                        pending.remove(name)
+                        running[pool.submit(self.run_one, name)] = name
+                    if not running:
+                        raise RuntimeError("No executable tasks remain (invalid graph)")
+                    done, _ = wait(running, return_when=FIRST_COMPLETED)
+                    failed = False
+                    for future in done:
+                        name = running.pop(future)
+                        if future.result():
+                            completed.add(name)
+                        else:
+                            failed = True
+                    if failed:
+                        self.stop_running()
+                        # All workers are joined by the executor context manager.
+                        return False
+                return True
+            except BaseException:
+                self.stop_running()
+                raise
+
+
+def execute(target, secrets, context, root=ROOT):
+    if target != "ollama":
+        raise ValueError("Tabby normal setup is disabled; only --debug is available")
+    tasks = load_manifest(Path(root) / "ollama_setup" / "tasks.json", root)
+    runner = TaskExecutor(tasks, secrets, context, root)
+    return runner.execute()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("task", nargs="?", help="Run exactly this task; dependencies are NOT automatically run")
+    group.add_argument("--all", action="store_true", help="Run the whole DAG")
+    group.add_argument("--list", action="store_true", help="List tasks")
+    args = parser.parse_args(argv)
+    try:
+        # The CLI is intended only for manual use on a --debug instance.
+        ctx = json.loads(DEBUG_CONTEXT.read_text(encoding="utf-8"))
+        if not isinstance(ctx, dict) or ctx.get("target") != "ollama":
+            raise ValueError("No runnable task graph for this target")
+        tasks = load_manifest(ROOT / "ollama_setup" / "tasks.json", ROOT)
+        if args.list:
+            for name, task in tasks.items():
+                print(f"{name:20s} after: {', '.join(task['after']) or '-'}")
+            return 0
+        if args.task and args.task not in tasks:
+            raise ValueError(f"Unknown task {args.task!r}; run --list")
+        runner = TaskExecutor(tasks, ctx["env"], ctx, ROOT)
+        return 0 if runner.execute(None if args.all else args.task) else 1
+    except (OSError, ValueError, KeyError, json.JSONDecodeError, RuntimeError) as exc:
+        print(f"Task runner error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

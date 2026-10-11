@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "tasks": {
+    "dns": {
+      "script": "ollama_setup/10_update_dns.py",
+      "after": [],
+      "secrets": [
+        "CF_API_TOKEN",
+        "CF_ZONE_ID"
+      ]
+    },
+    "install_ollama": {
+      "script": "ollama_setup/install_ollama.py",
+      "after": [],
+      "secrets": []
+    },
+    "configure_ollama": {
+      "script": "ollama_setup/configure_ollama.py",
+      "after": [
+        "install_ollama"
+      ],
+      "secrets": []
+    },
+    "pull_chat": {
+      "script": "ollama_setup/pull_chat.py",
+      "after": [
+        "configure_ollama"
+      ],
+      "secrets": []
+    },
+    "pull_autocomplete": {
+      "script": "ollama_setup/pull_autocomplete.py",
+      "after": [
+        "configure_ollama"
+      ],
+      "secrets": []
+    },
+    "cleanup_models": {
+      "script": "ollama_setup/cleanup_models.py",
+      "after": [
+        "pull_chat",
+        "pull_autocomplete"
+      ],
+      "secrets": []
+    },
+    "ready": {
+      "script": "ollama_setup/check_ready.py",
+      "after": [
+        "dns",
+        "cleanup_models"
+      ],
+      "secrets": []
+    }
+  }
+}

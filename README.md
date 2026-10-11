@@ -1,94 +1,155 @@
 # tabby-bootstrap
 
-**Temporärer KI-Server für Unterricht und Prüfungen.** Das Repository richtet auf einer frisch gestarteten GPU-Instanz bei [Lambda Cloud](https://cloud.lambda.ai/) entweder **Ollama** oder – perspektivisch – **Tabby** ein. Die Instanz klont dieses Repository selbst und führt die gewählte Setup-Pipeline aus. Die Auswahl des Targets erfolgt **einmalig in der Nix-DevShell**; `deploy-seed.sh` ist target-unabhängig.
+**Temporärer KI-Server für Unterricht und Prüfungen.** Ein lokaler, commitgetreuer
+Code-Snapshot wird per SSH auf eine kurzfristig gemietete GPU-VM übertragen.
+Dort installiert ein kleiner **Python-DAG-Scheduler** Ollama und die benötigten
+Modelle; unabhängige Tasks wie das **Cloudflare-DNS-Update starten parallel**.
+Das Repository wird **nicht auf der GPU von GitHub geklont**.
 
-**Status (09.10.2026):** Ollama wurde auf einer echten Lambda-Instanz erfolgreich installiert; VS-Code-Continue funktioniert sowohl für **Chat** als auch für **Autocomplete**. Tabby bleibt als historische Alternative erhalten, ist aber derzeit **nicht produktiv startbar**.
+**Stand: 11.10.2026.** Der *frühere* Lambda/Ollama-Bootstrap wurde am 09.10.
+mit Continue (Chat und Autocomplete) erfolgreich getestet. **Der neue
+Snapshot-/DAG-Bootstrap ist noch nicht auf einer echten GPU validiert**;
+vor Unterrichts- oder Prüfungseinsatz bitte einmal auf einer Testinstanz prüfen.
+Tabby bleibt als historischer, momentan nicht produktionsfähiger Pfad erhalten.
 
-## Normaler Ablauf: Ollama
+## Normaler Ablauf
 
-1. Auf der **Lambda-Website** die passende **Region und GPU** nach Verfügbarkeit, Schülerzahl und Einsatzzweck auswählen; Instanz starten und öffentliche IP notieren.
-2. Lokal im Repository die Ollama-DevShell betreten:
+1. Auf der Website von [Lambda Cloud](https://cloud.lambda.ai/) eine GPU-Instanz
+   manuell starten und ihre **öffentliche IP** notieren.
+2. Lokal im **sauberen, committeten Git-Checkout**:
 
    ```bash
-   nix develop                 # identisch mit: nix develop .#ollama
-   ```
-
-3. Bootstrap ausführen:
-
-   ```bash
+   nix develop                     # Ollama, alternativ nix develop .#ollama
    ./deploy-seed.sh <IP>
    ```
 
-4. Nach Unterricht/Prüfung die Instanz **auf der Lambda-Website terminieren und die Terminierung kontrollieren**. Nicht nur ausloggen, den Ollama-Dienst stoppen oder `shutdown` ausführen: Solange die Instanz nicht terminiert ist, können GPU-Kosten entstehen.
+3. Bei erfolgreichem Abschluss Continue mit `http://ai.donner-lab.org:11434`
+   verbinden und nach Möglichkeit eine echte Chat- und Autocomplete-Anfrage testen.
+4. **Nach dem Unterricht auf der Anbieter-Website die GPU terminieren und die
+   Terminierung überprüfen.** Nur `shutdown`, SSH-Logout oder Stoppen von Ollama
+   vermeidet nicht zuverlässig weitere Mietkosten.
 
-Der übliche Einsatz dauert ungefähr **3 × 45 Minuten**. Die GPU wird privat bezahlt; deshalb **nach dem Einsatz sofort terminieren**. Start und Terminierung bleiben bewusst manuell. Ein unabhängiger Kosten-Watchdog auf `cloud` ist nur ein **TODO**; dieses Repository verwendet **keine Lambda-API**.
+Typischer Einsatz: **3 × 45 Minuten**. GPU-Typ, Region, Start und Terminierung
+bleiben bewusst manuell. Dieses Repo verwendet **keine Provider-API**.
 
-## Voraussetzung und Zugangsdaten
+## Voraussetzungen und Secrets
 
-Auf dem lokalen NixOS-Rechner müssen eingerichtet sein:
+- `nix develop` lädt aus der **externen** `NixOS-Config` über SOPS/age
+  `CF_API_TOKEN` und `CF_ZONE_ID`. Keine Secrets in dieses Git-Repo kopieren.
+- Der **lokale** SSH-Schlüssel `~/.ssh/id_tabby_bootstrap` (aus dem LUKS-Vault)
+  authentifiziert den SSH-Zugang zur GPU. Er wird **nicht** auf die GPU kopiert;
+  dort braucht es weder einen GitHub-Schlüssel noch Git.
+- Die GPU ist über SSH erreichbar (Standarduser `ubuntu`), hat Python 3 und
+  für Ollama eine geeignete NVIDIA-GPU. Das aktuelle Lambda-Setup nutzt sudo
+  und systemd für den Ollama-Dienst. Port **11434/TCP** muss für Continue
+  entsprechend geöffnet sein.
+- Das lokale Repo muss **vollständig clean** sein: keine gestagten, unstaged
+  oder nicht ignorierten unversionierten Dateien. Sonst wird **vor der
+  Übertragung abgebrochen**. Änderungen vorher committen oder z. B.
+  `git stash push -u` verwenden. `origin`, GitHub und Push-Status werden
+  **nicht geprüft**. Der aktuelle lokale `HEAD` ist die einzige Codequelle.
 
-- Zugriff auf die im `flake.lock` gepinnte **NixOS-Config** mit funktionierendem **SOPS/age**. `nix develop` lädt für Ollama das Secret-Set `cloudflare` mit `CF_API_TOKEN` und `CF_ZONE_ID`.
-- Der private Schlüssel `~/.ssh/id_tabby_bootstrap` aus dem **lokalen LUKS-Vault** (von Home Manager bereitgestellt); der öffentliche Schlüssel allein ist kein Secret.
-- SSH-Zugang zur frisch gestarteten Lambda-Instanz, im Standardfall als Benutzer `ubuntu`, sowie Berechtigung zum Klonen von `git@github.com:BerndDonner/tabby-bootstrap.git` mit dem übertragenen Deploy-Key.
-- Für Continue: Netzfreigabe auf Lambda für Port **11434/TCP** im nötigen Umfang.
+Mit `nix flake update nixos-config` lässt sich die gepinnte zentrale
+NixOS-Config nach Änderungen aktualisieren (und anschließend committen).
 
-**Keine echten Secrets liegen in diesem Repository.** Der private Schlüssel und die beiden Cloudflare-Werte werden über SSH an den Remote-Bootstrap übertragen, **nicht** in `seed.py` hineingeschrieben. Der Schlüssel wird auf der kurzlebigen Instanz unter `~/.ssh/id_tabby_bootstrap` abgelegt, um den GitHub-Klon zu ermöglichen. Das ist **kein SSH-Agent-Forwarding**.
-
-Wenn sich die SOPS-Inhalte der zentralen NixOS-Config ändern, wird der gepinnte Input mit `nix flake update nixos-config` aktualisiert und die geänderte `flake.lock` committed.
-
-## Was der Bootstrap macht
-
-```text
-Lokal: nix develop → deploy-seed.sh <IP>
-           │
-           ├── SCP: seed.py (nur Programmcode)
-           └── SSH-stdin: JSON (Target, Git-Ref, Schlüssel, benötigte Secrets)
-                              │
-                              ▼
-Lambda: seed.py → GitHub-SSH-Key installieren → Repository klonen/aktualisieren
-                              │
-                    Target aus Payload
-                      ├── ollama_setup/run_all.py
-                      └── tabby_setup/run_all.py (derzeit gesperrt)
-```
-
-Für **Ollama** führt `run_all.py` die nummerierten Schritte aus:
-
-1. `10_update_dns.py`: Cloudflare-A-Record `ai.donner-lab.org` auf die aktuelle Instanz-IP setzen (TTL 60 s, ohne Cloudflare-Proxy).
-2. `20_setup_ollama.py`: Ollama installieren/konfigurieren, auf `0.0.0.0:11434` bereitstellen und Modelle laden.
-
-Die Modelle sind `deepseek-coder:6.7b` (**Autocomplete**) und `qwen2.5-coder:7b` (**Chat**). Die zugehörige Continue-Beispielkonfiguration liegt unter `vscode_config/config.yaml`; sie wird **nicht automatisch auf die Schulrechner verteilt**. Der Continue-Endpunkt lautet:
+## So funktioniert das Deployment
 
 ```text
-http://ai.donner-lab.org:11434
+Lokal: nix develop → ./deploy-seed.sh <IP>
+  ├── Git-Preflight: Working Tree clean, HEAD/Commit bestimmen
+  ├── git archive HEAD → tar + SHA-256
+  ├── SCP: ausschließlich Code-Snapshot, keine Secrets
+  └── SSH: Prüfsumme verifizieren, Snapshot nach ~/tabby-bootstrap entpacken
+        └── SSH-stdin: JSON-Payload mit Target/IP/Commit/Target-Secrets
+              └── seed.py
+                   ├── --debug: geschützten Secret-Kontext ablegen, STOP
+                   └── normal: task_runner.py startet parallelen DAG
+                       ├── dns ──────────────────────────────────────┐
+                       └── install_ollama → configure_ollama         │
+                                ├── pull_chat ──────────┐             │
+                                └── pull_autocomplete ──┴→ cleanup ─┴→ ready
 ```
 
-**Wichtig:** Ein erfolgreiches DNS-Update allein garantiert noch keinen nutzbaren Ollama-Server. Bei der Bereitstellung sollten der vollständige Setup-Durchlauf und mindestens eine Continue-Anfrage überprüft werden.
+Alle Skripte, der Scheduler und `ollama_setup/tasks.json` kommen **aus demselben
+lokalen Commit**. `git archive` enthält bewusst **keine `.git`-Historie**.
+Archivbytes werden auf der GPU per SHA-256 geprüft. Bei Wiederholung wird das
+vorherige Arbeitsverzeichnis unter `~/tabby-bootstrap.previous` abgelegt
+(die vorherige Sicherung wird dabei ersetzt).
 
-## Feature-Branches und Tests
+Task-IDs, Abhängigkeiten, Skripte und pro Task erlaubte Secrets stehen in
+[`ollama_setup/tasks.json`](ollama_setup/tasks.json). Ein `ThreadPoolExecutor`
+überwacht die externen Python-Prozesse; er implementiert **keine** Paketverwaltung.
+Die Cloudflare-Credentials erreichen **nur** den DNS-Prozess. Normale Läufe
+speichern sie nicht auf der GPU-Festplatte; die Übergabe erfolgt über SSH-stdin
+und Prozessumgebungen. DNS-TTL **60 s**, Cloudflare-Proxy **aus**.
 
-Die GPU klont von **GitHub**, nicht vom lokalen Arbeitsverzeichnis. Deshalb Änderungen an Remote-Setup-Skripten **committen und pushen**. Ohne `--branch` wird der **aktuell ausgecheckte lokale Branch** auf der GPU ausgewählt:
+Die Ollama-Modelle bleiben:
+
+| Verwendung | Modell |
+|---|---|
+| Autocomplete | `deepseek-coder:6.7b` |
+| Chat | `qwen2.5-coder:7b` |
+
+Die Beispiel-Konfiguration für VS Code Continue liegt unter
+[`vscode_config/config.yaml`](vscode_config/config.yaml). Sie wird nicht an
+Schulrechner verteilt. Ein lokaler Readiness-Test bestätigt Ollama und die
+beiden Modellnamen; **externe Port-Erreichbarkeit und DNS-Propagation sind damit
+nicht garantiert**. Gleichzeitige Schülerlast ist noch nicht gebenchmarkt.
+
+## Debug-Modus: derselbe Snapshot, kein Setup
 
 ```bash
-nix develop
-./deploy-seed.sh <IP> --debug    # Git-Klon, aber kein Ollama/Tabby-Setup
-./deploy-seed.sh <IP>            # vollständiger Ollama-Start
+./deploy-seed.sh <IP> --debug
+# danach auf der GPU (mit den gleichen SSH-Optionen wie beim Deploy):
+cd ~/tabby-bootstrap
+python3 task_runner.py --list
+python3 task_runner.py dns
+python3 task_runner.py install_ollama
+python3 task_runner.py configure_ollama
+python3 task_runner.py pull_chat
+python3 task_runner.py pull_autocomplete
+python3 task_runner.py cleanup_models
+python3 task_runner.py ready
+# oder ab hier vollständigen DAG ausführen:
+python3 task_runner.py --all
 ```
 
-`--branch <ref>` kann die Auswahl explizit überschreiben. Auch Tags und Commits sind im Remote-Bootstrap vorgesehen. `--debug` kontaktiert und verändert die GPU-Instanz bereits (Schlüsselinstallation und Git-Klon), lädt aber noch keine Modelle und ändert kein DNS.
+`--debug` ändert **kein DNS**, installiert nichts und lädt keine Modelle.
+Quellcode und das Originalarchiv `~/tabby-bootstrap-source.tar` bleiben für
+Fehlersuche und Offline-Wiederherstellung erhalten. Ein Git-Checkout im engeren
+Sinne existiert remote nicht: Skripte sind bearbeitbar, `git status`, `git pull`
+usw. dort aber **nicht möglich**.
 
-Lokale Tests ohne kostenpflichtige GPU:
+Damit die Secrets bei späteren SSH-Logins verfügbar bleiben, liegt **nur im
+Debug-Modus** `~/.config/tabby-bootstrap/debug.json` (`0600`, Verzeichnis `0700`)
+mit Klartext-Secrets. `task_runner.py` liest sie beim manuellen Aufruf und gibt
+sie nur den deklarierten Tasks weiter. Sie werden **nicht in `.bashrc` geladen**.
+Die Debug-Instanz ist **nicht für dauerhaften Betrieb** gedacht: nach Abschluss
+terminieren; bei Bedarf die Datei vorher selbst löschen. Ein späterer normaler
+Lauf entfernt einen eventuell noch vorhandenen Debug-Kontext.
+
+Ein Einzel-Task-Aufruf startet **keine** Vorgänger automatisch. Er kann daher
+fehlschlagen, wenn du notwendige Schritte überspringst. `--all` nutzt den DAG.
+
+## Tabby (bewusst geparkt)
 
 ```bash
-python3 -m unittest discover -s tests -v
+nix develop .#tabby
+./deploy-seed.sh <IP> --debug   # Code-Snapshot + Debug-Umgebung
 ```
 
-## Tabby bleibt absichtlich erhalten
+**Ohne `--debug` wird Tabby beim lokalen Preflight abgelehnt.** Die alten
+AWS-/Hetzner-Zugänge existieren nicht mehr; es werden keine Dummy-Secrets
+angelegt. `tabby_setup/`, `backup/`, `restore/`, `include/` und die historischen
+Skripte bleiben für eine eventuelle spätere Reaktivierung erhalten. Die freie
+Tabby-Edition ist für zehn Schüler wegen ihrer Seat-Grenze nicht geeignet.
 
-Tabby war die frühere Lösung. Die **kostenlose Tabby-Version ist auf fünf Seats begrenzt** und deshalb für den regulären Klassenunterricht ungeeignet. Bei einer **MCT-Abschlussprüfung mit beispielsweise drei Teilnehmenden** könnte Tabby dagegen erneut interessant werden.
+## Tests und Dokumentation
 
-Die früheren AWS-/Hetzner-Speicherzugänge existieren nicht mehr. Es werden deshalb **keine Fake-Secrets** in SOPS angelegt. `nix develop .#tabby` wählt das Target, gestattet aktuell aber nur einen **Clone-Test mit `--debug`**; ein echter Tabby-Start wird bewusst abgelehnt. Die Tabby-, Backup- und Restore-Skripte bleiben für eine spätere Reaktivierung im Repository.
+```bash
+python3 -m unittest discover -s tests -v    # Offline, ohne GPU
+```
 
-## Dokumentation für Wartung und spätere Weiterentwicklung
-
-**[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** hält die vollständige Drei-Stage-Architektur, Secret-Lebenszyklen, die Entscheidungen zur SSH-Host-Key-Prüfung, den historischen Hintergrund, die Risiken, bekannte Altlasten und offene TODOs fest. **Bei Änderungen am Bootstrap bitte zuerst diese Datei lesen.**
+Für Hintergründe, Sicherheitsentscheidungen, das vereinbarte KISS-Design und
+TODOs siehe **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**. Vor Änderungen
+an Deployment oder Secret-Handling zuerst dieses Dokument lesen.

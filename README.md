@@ -6,11 +6,11 @@ Dort installiert ein kleiner **Python-DAG-Scheduler** Ollama und die benötigten
 Modelle; unabhängige Tasks wie das **Cloudflare-DNS-Update starten parallel**.
 Das Repository wird **nicht auf der GPU von GitHub geklont**.
 
-**Stand: 11.10.2026.** Der *frühere* Lambda/Ollama-Bootstrap wurde am 09.10.
-mit Continue (Chat und Autocomplete) erfolgreich getestet. **Der neue
-Snapshot-/DAG-Bootstrap ist noch nicht auf einer echten GPU validiert**;
-vor Unterrichts- oder Prüfungseinsatz bitte einmal auf einer Testinstanz prüfen.
-Tabby bleibt als historischer, momentan nicht produktionsfähiger Pfad erhalten.
+**Stand: 11.10.2026.** Der neue Snapshot-/DAG-Pfad wurde auf einer echten
+Lambda-GPU mit `--debug`, anschließend `task_runner.py --all`, DNS-Update,
+beiden Modellen und VS Code Continue erfolgreich getestet. Der **Normalmodus**
+wird noch separat getestet. Tabby bleibt als historischer, momentan nicht
+produktionsfähiger Pfad erhalten.
 
 ## Normaler Ablauf
 
@@ -82,6 +82,16 @@ Task-IDs, Abhängigkeiten, Skripte und pro Task erlaubte Secrets stehen in
 Die Cloudflare-Credentials erreichen **nur** den DNS-Prozess. Normale Läufe
 speichern sie nicht auf der GPU-Festplatte; die Übergabe erfolgt über SSH-stdin
 und Prozessumgebungen. DNS-TTL **60 s**, Cloudflare-Proxy **aus**.
+
+**Fortschritt und Laufzeiten:** Jede Ausgabe der Tasks erhält ein
+`[task-id]`-Präfix. Normale Logzeilen erscheinen sofort. Die mit `\r`
+überschriebenen Fortschrittsanzeigen von `curl`/`ollama pull` werden etwa alle
+**2 Sekunden** protokolliert; der letzte Fortschrittsstand geht nicht verloren.
+Jeder Task meldet `OK (12.3s)` bzw. `FAILED (exit 1, 12.3s)`. Nach dem gesamten
+Graphen erscheint `[bootstrap] TOTAL ...` (nur **Remote-DAG**); die abschließende
+`Total deployment time`-Zeile von `deploy-seed.sh` misst zusätzlich lokalen
+Preflight, Übertragung und Remote-Ausführung. Beide Zeiten sind Wall-Clock-Zeiten:
+parallel ausgeführte Taskdauern dürfen sich überlappen.
 
 Die Ollama-Modelle bleiben:
 

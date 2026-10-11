@@ -175,6 +175,19 @@ APIs sind **nicht implementiert**. Parallelität der beiden `ollama pull` kann
 sich gegenseitig beeinflussen und muss live gemessen werden; bei Bedarf eine
 explizite Ressourcensperre oder Kante einführen, **nicht** blind serialisieren.
 
+**Logging:** Jeder Task hat genau einen gekapselten stdout/stderr-Stream. Der
+Runner liest dessen Bytes inkrementell (UTF-8), entfernt Terminal-Steuerzeichen
+und unterscheidet normale `\n`-Zeilen von `\r`-Fortschrittsständen (z. B.
+`ollama pull` und `curl`). Normale Zeilen werden sofort mit `[task-id]` geloggt;
+`\r`-Updates höchstens etwa alle 2 s, der abschließende Stand zusätzlich.
+Das Logging bleibt durch denselben Lock wie bisher serialisiert; bekannte
+Secret-Werte werden vor dem Schreiben ersetzt. Jeder Task meldet seine
+Wall-Clock-Dauer via `time.monotonic()`; `[bootstrap] TOTAL` folgt erst nach
+Abschluss bzw. Abbruch aller Worker und umfasst nur den Remote-DAG.
+`deploy-seed.sh` meldet zusätzlich die **Gesamtdauer einschließlich lokaler
+Vorbereitung, SSH-Transport und Remote-Ausführung** (Bash `SECONDS`). Es gibt
+keine zusätzliche Scheduler-Abhängigkeit und keine Änderungen am Task-Graphen.
+
 **Manuelles Debugging:** nach `./deploy-seed.sh <IP> --debug` per SSH anmelden:
 
 ```bash
@@ -255,23 +268,24 @@ Secrets/SOPS-Architektur, Docker, Hetzner-Speichern, Tabby-Seats oder
 
 ## 9. Teststatus und Wartungscheckliste
 
-Der vorherige SOPS-/Remote-Clone-Bootstrap lief laut Nutzer am **09.10.2026**
-auf Lambda mit erfolgreichem DNS-Update, Ollama-Modellen sowie VS-Code-Continue-
-Chat und -Autocomplete. Daraus folgt **keine Freigabe** des jetzt neuen
-Snapshot-/DAG-Pfads. Offline-Prüfung:
+Der vorherige SOPS-/Remote-Clone-Bootstrap lief am **09.10.2026** auf Lambda.
+Am **11.10.2026** wurde auch der neue Snapshot-/DAG-Pfad auf Lambda erfolgreich
+geprüft: `--debug` mit anschließendem manuellem `task_runner.py --all`,
+parallelem DNS/Installer-Start, parallelen Modelldownloads und VS Code Continue.
+Ein separater Test von `./deploy-seed.sh <IP>` **ohne `--debug`** steht noch aus.
+Offline-Prüfung:
 
 ```bash
 python3 -m unittest discover -s tests -v
 bash -n deploy-seed.sh
 ```
 
-Bei Live-Validierung zuerst `--debug` auf einer frischen GPU, anschließend
-manuelle Task-Aufrufe bzw. separater Normaldeploy und Prüfung von DNS, GPU-
-Prozess, Ollama-API und **echten** Continue-Anfragen. Zeiten pro Task messen;
-Time-to-Ready hat Vorrang vor kosmetischer Serialisierung. Bei Änderungen
-immer Code, Tests, README und diese Datei zusammen aktualisieren.
+Beim nächsten Live-Test den **Normalmodus** inklusive Laufzeit-Ausgaben,
+DNS, GPU-Prozess, Ollama-API und echten Continue-Anfragen prüfen. Time-to-Ready
+hat Vorrang vor kosmetischer Serialisierung. Bei Änderungen immer Code, Tests,
+README und diese Datei zusammen aktualisieren.
 
-**Offene Aufgaben:** echte Lambda-Validierung, Benchmark mit etwa zehn
+**Offene Aufgaben:** Normalmodus-Lambda-Test, Benchmark mit etwa zehn
 Continue-Clients, robuste sichere Ollama-Port-Freigabe inkl. Distanzunterricht,
 evtl. GPU-Container-Runtimes und dynamische Ports, Tabby-Reaktivierung (nur auf
 Auftrag), unabhängiger Kosten-Watchdog auf `cloud`.

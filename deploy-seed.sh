@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+DEPLOY_STARTED=$SECONDS
 
 # Usage: ./deploy-seed.sh <IP> [--debug]
 # Target and SOPS secrets come from 'nix develop' / 'nix develop .#tabby'.
@@ -99,3 +100,4 @@ python3 "$SCRIPT_DIR/bootstrap_payload.py" "${payload_args[@]}" |
   ssh -T "${SSH_OPTS[@]}" "$REMOTE" 'python3 -u "$HOME/tabby-bootstrap/seed.py"'
 
 echo "Bootstrap complete: $BOOTSTRAP_TARGET ($COMMIT)"
+echo "Total deployment time: $((SECONDS - DEPLOY_STARTED))s (including preflight, transfer and remote tasks)"

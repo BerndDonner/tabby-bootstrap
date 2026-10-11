@@ -7,6 +7,7 @@ its dependencies) or the complete graph (--all). It never prints credentials.
 """
 
 import argparse
+import codecs
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
@@ -16,12 +17,92 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 ROOT = Path(__file__).resolve().parent
 DEBUG_CONTEXT = Path.home() / ".config" / "tabby-bootstrap" / "debug.json"
 KNOWN_SECRET_NAMES = {"CF_API_TOKEN", "CF_ZONE_ID"}
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 ENV_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Remove terminal controls from captured CLI output; never send cursor movement
+# instructions from curl/ollama into the user's SSH session.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+
+
+class TaskOutput:
+    """Turn LF lines and CR-overwritten progress into readable live log lines.
+
+    Normal lines are never throttled. Carriage-return progress is sampled once
+    every interval seconds, then its last state is printed before the next
+    normal line / end of stream. Handles UTF-8 and CRLF across pipe chunks.
+    """
+
+    def __init__(self, emit, interval=2.0, clock=time.monotonic):
+        self.emit = emit
+        self.interval = interval
+        self.clock = clock
+        self.buffer = ""
+        self.after_cr = False
+        self.progress = None
+        self.last_progress = None
+        self.last_sample = None
+
+    @staticmethod
+    def clean(line):
+        line = ANSI_ESCAPE.sub("", line)
+        return re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", "", line).rstrip()
+
+    def flush_progress(self):
+        if self.progress and self.progress != self.last_progress:
+            self.emit(self.progress)
+            self.last_progress = self.progress
+        self.progress = None
+        self.last_progress = None
+        self.last_sample = None
+
+    def _record(self, line, is_progress):
+        line = self.clean(line)
+        if not line.strip():
+            return
+        if is_progress:
+            self.progress = line
+            now = self.clock()
+            if self.last_sample is None or now - self.last_sample >= self.interval:
+                if line != self.last_progress:
+                    self.emit(line)
+                    self.last_progress = line
+                self.last_sample = now
+        else:
+            self.flush_progress()
+            self.emit(line)
+
+    def feed(self, chunk, final=False):
+        # The previous read may have ended exactly on CR. Treat it as a live
+        # progress update immediately, and swallow a following LF if present.
+        if self.after_cr:
+            chunk = chunk.removeprefix("\n")
+            self.after_cr = False
+        self.buffer += chunk
+        while True:
+            sep = re.search(r"[\r\n]", self.buffer)
+            if sep is None:
+                break
+            i = sep.start()
+            char = self.buffer[i]
+            if char == "\r" and i + 1 == len(self.buffer) and not final:
+                self._record(self.buffer[:i], is_progress=True)
+                self.buffer = ""
+                self.after_cr = True
+                break
+            crlf = char == "\r" and self.buffer[i:i + 2] == "\r\n"
+            self._record(self.buffer[:i], is_progress=char == "\r" and not crlf)
+            self.buffer = self.buffer[i + (2 if crlf else 1):]
+        if final:
+            if self.buffer:
+                self._record(self.buffer, is_progress=False)
+                self.buffer = ""
+            self.flush_progress()
+
 
 
 def load_manifest(path, root=ROOT):
@@ -136,54 +217,65 @@ class TaskExecutor:
                 return False
             proc = subprocess.Popen(command, cwd=self.root, env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, errors="replace", bufsize=1,
+                                    bufsize=0,
                                     start_new_session=True)
             self.active[name] = proc
+        started = time.monotonic()
         self.log(name, "START")
         try:
+            output = TaskOutput(lambda line: self.log(name, line))
+            decoder = codecs.getincrementaldecoder("utf-8")("replace")
             with proc.stdout:
-                for line in proc.stdout:
-                    self.log(name, line.rstrip("\r\n"))
+                while chunk := os.read(proc.stdout.fileno(), 8192):
+                    output.feed(decoder.decode(chunk))
+                output.feed(decoder.decode(b"", final=True), final=True)
             status = proc.wait()
         finally:
             with self.lock:
                 self.active.pop(name, None)
-        self.log(name, "OK" if status == 0 else f"FAILED (exit {status})")
+        elapsed = time.monotonic() - started
+        self.log(name, f"OK ({elapsed:.1f}s)" if status == 0
+                 else f"FAILED (exit {status}, {elapsed:.1f}s)")
         return status == 0
 
     def execute(self, selected=None):
         if selected is not None:
             return self.run_one(selected)
+        started = time.monotonic()
         pending = set(self.tasks)
         completed = set()
         running = {}
-        with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
-            try:
-                while pending or running:
-                    ready = sorted(n for n in pending if set(self.tasks[n]["after"]) <= completed)
-                    for name in ready:
-                        if len(running) >= self.max_workers:
-                            break
-                        pending.remove(name)
-                        running[pool.submit(self.run_one, name)] = name
-                    if not running:
-                        raise RuntimeError("No executable tasks remain (invalid graph)")
-                    done, _ = wait(running, return_when=FIRST_COMPLETED)
-                    failed = False
-                    for future in done:
-                        name = running.pop(future)
-                        if future.result():
-                            completed.add(name)
-                        else:
-                            failed = True
-                    if failed:
-                        self.stop_running()
-                        # All workers are joined by the executor context manager.
-                        return False
-                return True
-            except BaseException:
-                self.stop_running()
-                raise
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as pool:
+                try:
+                    while pending or running:
+                        ready = sorted(n for n in pending if set(self.tasks[n]["after"]) <= completed)
+                        for name in ready:
+                            if len(running) >= self.max_workers:
+                                break
+                            pending.remove(name)
+                            running[pool.submit(self.run_one, name)] = name
+                        if not running:
+                            raise RuntimeError("No executable tasks remain (invalid graph)")
+                        done, _ = wait(running, return_when=FIRST_COMPLETED)
+                        failed = False
+                        for future in done:
+                            name = running.pop(future)
+                            if future.result():
+                                completed.add(name)
+                            else:
+                                failed = True
+                        if failed:
+                            self.stop_running()
+                            # All workers are joined by the executor context manager.
+                            return False
+                    return True
+                except BaseException:
+                    self.stop_running()
+                    raise
+        finally:
+            elapsed = time.monotonic() - started
+            self.log("bootstrap", f"TOTAL {elapsed:.1f}s | {len(completed)}/{len(self.tasks)} tasks completed")
 
 
 def execute(target, secrets, context, root=ROOT):
